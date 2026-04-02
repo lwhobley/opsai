@@ -3,20 +3,21 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [
-    react({
-      // Treat all .js files as JSX (CRA compatibility)
-      include: ['**/*.js', '**/*.jsx'],
-    }),
-  ],
-  optimizeDeps: {
-    esbuildOptions: {
-      loader: { '.js': 'jsx' },
-    },
-  },
+  plugins: [react()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+    },
+    extensions: ['.jsx', '.js', '.tsx', '.ts', '.json'],
+  },
+  esbuild: {
+    loader: 'jsx',
+    include: /src\/.*\.js$/,
+    exclude: [],
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: { '.js': 'jsx' },
     },
   },
   server: {
@@ -25,9 +26,8 @@ export default defineConfig({
   build: {
     outDir: 'build',
     sourcemap: false,
-  },
-  define: {
-    // CRA compatibility
-    'process.env': {},
+    rollupOptions: {
+      input: path.resolve(__dirname, 'index.html'),
+    },
   },
 });
