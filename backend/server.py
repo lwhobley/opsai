@@ -27,7 +27,8 @@ from database import get_db, engine, Base
 from models import (
     User, InventoryItem, InventoryCount, KitchenInventoryItem, 
     KitchenInventoryCount, Purchase, Sale, MenuItem, MenuItemIngredient,
-    ToastIntegration
+    ToastIntegration,
+    WasteLog
 )
 
 # Configure logging
@@ -761,6 +762,325 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
+
+
+# ============================================================
+# Reports & Analytics Endpoints
+# ============================================================
+
+class WasteLogCreate(BaseModel):
+    item_name: str
+    item_type: str                  # bar | kitchen
+    reason: str                     # waste | comp | spill | breakage | expired | other
+    quantity: float = 1.0
+    unit: Optional[str] = None
+    estimated_cost: float = 0.0
+    notes: Optional[str] = None
+    date: Optional[str] = None      # ISO date string; defaults to now
+
+# ── Waste Log ──────────────────────────────────────────────
+
+@api_router.post("/reports/waste")
+async def log_waste(data: WasteLogCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    log_date = datetime.now(timezone.utc)
+    if data.date:
+        try:
+            log_date = datetime.fromisoformat(data.date).replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+    entry = WasteLog(
+        item_name=data.item_name, item_type=data.item_type, reason=data.reason,
+        quantity=data.quantity, unit=data.unit, estimated_cost=data.estimated_cost,
+        notes=data.notes, logged_by=user.id, date=log_date,
+    )
+    db.add(entry)
+    await db.commit()
+    return {"message": "Waste logged", "id": entry.id}
+
+@api_router.get("/reports/waste")
+async def get_waste_logs(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(WasteLog).where(WasteLog.date >= start).order_by(desc(WasteLog.date))
+    )
+    logs = result.scalars().all()
+    return [
+        {
+            "id": l.id, "item_name": l.item_name, "item_type": l.item_type,
+            "reason": l.reason, "quantity": l.quantity, "unit": l.unit,
+            "estimated_cost": l.estimated_cost, "notes": l.notes,
+            "date": l.date.isoformat(),
+        }
+        for l in logs
+    ]
+
+@api_router.delete("/reports/waste/{log_id}")
+async def delete_waste_log(log_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
+    result = await db.execute(select(WasteLog).where(WasteLog.id == log_id))
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Log not found")
+    await db.delete(entry)
+    await db.commit()
+    return {"message": "Deleted"}
+
+# ── Sales Report ───────────────────────────────────────────
+
+@api_router.get("/reports/sales")
+async def report_sales(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(Sale).where(Sale.date >= start).order_by(Sale.date)
+    )
+    sales = result.scalars().all()
+    rows = [{"date": s.date.strftime("%Y-%m-%d"), "total": s.total_sales, "bar": s.bar_sales, "food": s.food_sales} for s in sales]
+    total  = sum(r["total"] for r in rows)
+    bar    = sum(r["bar"]   for r in rows)
+    food   = sum(r["food"]  for r in rows)
+    avg    = round(total / len(rows), 2) if rows else 0
+    return {
+        "period_days": days, "rows": rows,
+        "summary": {"total_sales": round(total,2), "bar_sales": round(bar,2), "food_sales": round(food,2), "avg_daily_sales": avg, "days_with_data": len(rows)},
+    }
+
+# ── Liquor / Pour Cost Report ──────────────────────────────
+
+@api_router.get("/reports/pour-cost")
+async def report_pour_cost(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Bar purchases
+    purch_result = await db.execute(
+        select(Purchase).where(and_(Purchase.date >= start, Purchase.purchase_type == "bar")).order_by(Purchase.date)
+    )
+    purchases = purch_result.scalars().all()
+
+    # Bar sales
+    sales_result = await db.execute(
+        select(func.sum(Sale.bar_sales)).where(Sale.date >= start)
+    )
+    bar_sales = sales_result.scalar() or 0
+
+    # Waste cost (bar)
+    waste_result = await db.execute(
+        select(func.sum(WasteLog.estimated_cost)).where(and_(WasteLog.date >= start, WasteLog.item_type == "bar"))
+    )
+    waste_cost = waste_result.scalar() or 0
+
+    total_cogs   = sum(p.total_cost for p in purchases)
+    pour_cost_pct = round((total_cogs / bar_sales * 100) if bar_sales > 0 else 0, 1)
+    target        = 20.0
+    variance      = round(pour_cost_pct - target, 1)
+
+    # By category
+    cat_result = await db.execute(
+        select(Purchase.item_name, func.sum(Purchase.total_cost))
+        .where(and_(Purchase.date >= start, Purchase.purchase_type == "bar"))
+        .group_by(Purchase.item_name)
+        .order_by(desc(func.sum(Purchase.total_cost)))
+    )
+    by_item = [{"name": r[0], "cost": round(r[1], 2)} for r in cat_result.all()]
+
+    return {
+        "period_days": days,
+        "bar_sales": round(bar_sales, 2),
+        "bar_cogs": round(total_cogs, 2),
+        "waste_cost": round(waste_cost, 2),
+        "pour_cost_pct": pour_cost_pct,
+        "target_pct": target,
+        "variance": variance,
+        "status": "over" if variance > 0 else "on_target" if variance == 0 else "under",
+        "top_purchases": by_item[:10],
+    }
+
+# ── Food Cost Report ───────────────────────────────────────
+
+@api_router.get("/reports/food-cost")
+async def report_food_cost(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+
+    purch_result = await db.execute(
+        select(Purchase).where(and_(Purchase.date >= start, Purchase.purchase_type == "kitchen"))
+    )
+    purchases = purch_result.scalars().all()
+
+    sales_result = await db.execute(select(func.sum(Sale.food_sales)).where(Sale.date >= start))
+    food_sales = sales_result.scalar() or 0
+
+    waste_result = await db.execute(
+        select(func.sum(WasteLog.estimated_cost)).where(and_(WasteLog.date >= start, WasteLog.item_type == "kitchen"))
+    )
+    waste_cost = waste_result.scalar() or 0
+
+    total_cogs    = sum(p.total_cost for p in purchases)
+    food_cost_pct = round((total_cogs / food_sales * 100) if food_sales > 0 else 0, 1)
+    target        = 30.0
+    variance      = round(food_cost_pct - target, 1)
+
+    menu_result = await db.execute(
+        select(MenuItem).where(MenuItem.is_active == True).options(selectinload(MenuItem.ingredients))
+    )
+    menu_items = menu_result.scalars().all()
+    menu_rows = []
+    for item in menu_items:
+        cost = sum(i.quantity_used * i.cost_per_unit for i in item.ingredients)
+        pct  = round((cost / item.price * 100) if item.price > 0 else 0, 1)
+        menu_rows.append({"name": item.name, "category": item.category, "price": item.price, "cost": round(cost,2), "cost_pct": pct, "margin": round(item.price - cost, 2)})
+    menu_rows.sort(key=lambda x: x["cost_pct"], reverse=True)
+
+    return {
+        "period_days": days,
+        "food_sales": round(food_sales, 2),
+        "food_cogs": round(total_cogs, 2),
+        "waste_cost": round(waste_cost, 2),
+        "food_cost_pct": food_cost_pct,
+        "target_pct": target,
+        "variance": variance,
+        "status": "over" if variance > 0 else "on_target" if variance == 0 else "under",
+        "menu_items": menu_rows,
+    }
+
+# ── Inventory Variance Report ──────────────────────────────
+
+@api_router.get("/reports/inventory-variance")
+async def report_inventory_variance(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Compare the two most recent counts per bar item to show movement/shrinkage."""
+    items_result = await db.execute(select(InventoryItem).where(InventoryItem.is_active == True))
+    items = items_result.scalars().all()
+
+    rows = []
+    for item in items:
+        counts_result = await db.execute(
+            select(InventoryCount.level_percentage, InventoryCount.timestamp)
+            .where(InventoryCount.item_id == item.id)
+            .order_by(desc(InventoryCount.timestamp))
+            .limit(2)
+        )
+        counts = counts_result.all()
+        if len(counts) < 2:
+            continue
+        latest, previous = counts[0], counts[1]
+        change  = latest[0] - previous[0]
+        # Estimate bottle value lost
+        cost_impact = round(abs(change) / 100 * (item.cost_per_unit or 0), 2)
+        rows.append({
+            "name": item.name, "location": item.location, "category": item.category,
+            "previous_pct": previous[0], "current_pct": latest[0],
+            "change_pct": change,
+            "previous_date": previous[1].strftime("%Y-%m-%d %H:%M"),
+            "current_date":  latest[1].strftime("%Y-%m-%d %H:%M"),
+            "cost_impact": cost_impact,
+            "flag": "shrinkage" if change < -25 else ("low" if latest[0] <= 25 else "ok"),
+        })
+
+    rows.sort(key=lambda x: x["change_pct"])
+    total_shrinkage_cost = round(sum(r["cost_impact"] for r in rows if r["change_pct"] < -25), 2)
+    low_stock = [r for r in rows if r["flag"] in ("shrinkage", "low")]
+
+    return {
+        "items": rows,
+        "summary": {
+            "total_items": len(rows),
+            "low_stock_count": len(low_stock),
+            "shrinkage_items": len([r for r in rows if r["flag"] == "shrinkage"]),
+            "estimated_shrinkage_cost": total_shrinkage_cost,
+        }
+    }
+
+# ── Low Stock Report ───────────────────────────────────────
+
+@api_router.get("/reports/low-stock")
+async def report_low_stock(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """All bar + kitchen items at or below par / 25% threshold."""
+    bar_result = await db.execute(select(InventoryItem).where(InventoryItem.is_active == True))
+    bar_items  = bar_result.scalars().all()
+
+    low_bar = []
+    for item in bar_items:
+        cr = await db.execute(
+            select(InventoryCount.level_percentage, InventoryCount.timestamp)
+            .where(InventoryCount.item_id == item.id)
+            .order_by(desc(InventoryCount.timestamp)).limit(1)
+        )
+        row = cr.first()
+        if row and row[0] <= 25:
+            low_bar.append({
+                "name": item.name, "type": "bar", "location": item.location,
+                "category": item.category, "level_pct": row[0],
+                "last_counted": row[1].strftime("%Y-%m-%d %H:%M"),
+                "cost_per_unit": item.cost_per_unit,
+                "urgency": "critical" if row[0] == 0 else ("high" if row[0] <= 10 else "medium"),
+            })
+
+    kitchen_result = await db.execute(select(KitchenInventoryItem).where(KitchenInventoryItem.is_active == True))
+    kitchen_items  = kitchen_result.scalars().all()
+
+    low_kitchen = []
+    for item in kitchen_items:
+        cr = await db.execute(
+            select(KitchenInventoryCount.quantity, KitchenInventoryCount.timestamp)
+            .where(KitchenInventoryCount.item_id == item.id)
+            .order_by(desc(KitchenInventoryCount.timestamp)).limit(1)
+        )
+        row = cr.first()
+        if row and item.par_level > 0 and row[0] < item.par_level:
+            pct_of_par = round(row[0] / item.par_level * 100)
+            low_kitchen.append({
+                "name": item.name, "type": "kitchen", "location": item.location,
+                "station": item.station, "quantity": row[0], "par_level": item.par_level,
+                "unit": item.unit, "pct_of_par": pct_of_par,
+                "last_counted": row[1].strftime("%Y-%m-%d %H:%M"),
+                "cost_per_unit": item.cost_per_unit,
+                "urgency": "critical" if row[0] == 0 else ("high" if pct_of_par <= 25 else "medium"),
+            })
+
+    all_low = sorted(low_bar + low_kitchen, key=lambda x: {"critical": 0, "high": 1, "medium": 2}[x["urgency"]])
+    return {
+        "items": all_low,
+        "summary": {
+            "total_low": len(all_low),
+            "critical": len([i for i in all_low if i["urgency"] == "critical"]),
+            "high": len([i for i in all_low if i["urgency"] == "high"]),
+            "medium": len([i for i in all_low if i["urgency"] == "medium"]),
+        }
+    }
+
+# ── Waste Summary Report ───────────────────────────────────
+
+@api_router.get("/reports/waste-summary")
+async def report_waste_summary(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(WasteLog.reason, WasteLog.item_type, func.count(WasteLog.id), func.sum(WasteLog.estimated_cost))
+        .where(WasteLog.date >= start)
+        .group_by(WasteLog.reason, WasteLog.item_type)
+    )
+    rows = result.all()
+
+    by_reason = {}
+    for reason, itype, count, cost in rows:
+        if reason not in by_reason:
+            by_reason[reason] = {"reason": reason, "count": 0, "cost": 0.0, "bar": 0.0, "kitchen": 0.0}
+        by_reason[reason]["count"] += count
+        by_reason[reason]["cost"]  += cost or 0
+        by_reason[reason][itype]   = round((by_reason[reason].get(itype, 0) or 0) + (cost or 0), 2)
+
+    detail_result = await db.execute(
+        select(WasteLog).where(WasteLog.date >= start).order_by(desc(WasteLog.date)).limit(50)
+    )
+    recent = detail_result.scalars().all()
+
+    total_cost = sum(r.estimated_cost or 0 for r in recent)
+    return {
+        "period_days": days,
+        "total_waste_cost": round(total_cost, 2),
+        "by_reason": sorted(by_reason.values(), key=lambda x: x["cost"], reverse=True),
+        "recent_entries": [
+            {"date": r.date.strftime("%Y-%m-%d"), "item": r.item_name, "reason": r.reason,
+             "quantity": r.quantity, "unit": r.unit, "cost": r.estimated_cost, "notes": r.notes}
+            for r in recent
+        ],
+    }
 
 # ============================================================
 # Toast POS Integration

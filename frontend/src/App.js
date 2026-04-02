@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from './components/ui/sonner';
 import { 
   House, Wine, CookingPot, Sparkle, DotsThree, 
-  ForkKnife, Users, FileArrowUp, SignOut, Gear, PlugsConnected
+  ForkKnife, Users, FileArrowUp, SignOut, Gear, PlugsConnected, ChartBar
 } from '@phosphor-icons/react';
 
 // Pages
@@ -17,6 +17,7 @@ import MenuCosting from './pages/MenuCosting';
 import ImportData from './pages/ImportData';
 import UserManagement from './pages/UserManagement';
 import Integrations from './pages/Integrations';
+import Reports from './pages/Reports';
 
 import './App.css';
 
@@ -59,6 +60,7 @@ const AppLayout = ({ children }) => {
     { path: '/menu', icon: ForkKnife, label: 'Menu Costing' },
     ...(isManager ? [{ path: '/import', icon: FileArrowUp, label: 'Import Data' }] : []),
     ...(isAdmin ? [{ path: '/users', icon: Users, label: 'Users' }] : []),
+    { path: '/reports', icon: ChartBar, label: 'Reports' },
     ...(isAdmin ? [{ path: '/integrations', icon: PlugsConnected, label: 'Integrations' }] : []),
   ];
 
@@ -217,6 +219,12 @@ const AppRouter = () => {
         </ProtectedRoute>
       } />
       
+      <Route path="/reports" element={
+        <ProtectedRoute>
+          <AppLayout><Reports /></AppLayout>
+        </ProtectedRoute>
+      } />
+
       <Route path="/integrations" element={
         <ProtectedRoute>
           <AppLayout><Integrations /></AppLayout>

@@ -159,3 +159,19 @@ class ToastIntegration(Base):
     connected_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+class WasteLog(Base):
+    """Tracks waste, comps, spillage, breakage for accurate cost accounting."""
+    __tablename__ = 'waste_logs'
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    item_name = Column(String(255), nullable=False)
+    item_type = Column(String(50), nullable=False)   # bar | kitchen
+    reason = Column(String(100), nullable=False)      # waste | comp | spill | breakage | expired | other
+    quantity = Column(Float, nullable=False, default=1.0)
+    unit = Column(String(50), nullable=True)
+    estimated_cost = Column(Float, default=0.0)
+    notes = Column(Text, nullable=True)
+    logged_by = Column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    date = Column(DateTime(timezone=True), default=utc_now, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
