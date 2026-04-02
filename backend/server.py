@@ -72,16 +72,21 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
+        admin_pin = os.environ.get("ADMIN_PIN")
+        if not admin_pin:
+            raise RuntimeError("ADMIN_PIN environment variable is required to seed the admin user.")
         result = await db.execute(select(User).where(User.role == "admin"))
         admin = result.scalar_one_or_none()
         if not admin:
-            admin_pin = os.environ.get("ADMIN_PIN")
-            if not admin_pin:
-                raise RuntimeError("ADMIN_PIN environment variable is required to seed the admin user.")
             admin_user = User(name="Admin", pin_hash=hash_pin(admin_pin), role="admin")
             db.add(admin_user)
             await db.commit()
             logger.info("Admin user seeded from ADMIN_PIN env var.")
+        else:
+            # Always sync admin PIN from env var so deploys fix stale hashes
+            admin.pin_hash = hash_pin(admin_pin)
+            await db.commit()
+            logger.info("Admin PIN synced from ADMIN_PIN env var.")
 
     yield  # app is running
 
