@@ -88,6 +88,7 @@ export const AuthProvider = ({ children }) => {
     api,
     isAdmin: user?.role === 'admin',
     isManager: user?.role === 'admin' || user?.role === 'manager',
+    isStaff: user?.role === 'staff',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

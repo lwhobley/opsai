@@ -18,6 +18,7 @@ import ImportData from './pages/ImportData';
 import UserManagement from './pages/UserManagement';
 import Integrations from './pages/Integrations';
 import Reports from './pages/Reports';
+import StaffCountMode from './pages/StaffCountMode';
 
 import './App.css';
 
@@ -170,6 +171,15 @@ const AppRouter = () => {
       <div className="min-h-screen flex items-center justify-center bg-[#0A0A12]">
         <div className="animate-spin w-8 h-8 border-2 border-[#D4A017] border-t-transparent rounded-full" />
       </div>
+    );
+  }
+
+  // Staff users get a simplified count-only experience
+  if (user && user.role === 'staff') {
+    return (
+      <Routes>
+        <Route path="*" element={<StaffCountMode />} />
+      </Routes>
     );
   }
 
