@@ -703,6 +703,31 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
+# Admin endpoint to clear all data
+@api_router.delete("/admin/clear-data")
+async def clear_all_data(db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    """Clear all sample/test data from the database"""
+    from sqlalchemy import delete
+    
+    # Clear counts first (foreign keys)
+    await db.execute(delete(InventoryCount))
+    await db.execute(delete(KitchenInventoryCount))
+    
+    # Clear items
+    await db.execute(delete(InventoryItem))
+    await db.execute(delete(KitchenInventoryItem))
+    
+    # Clear purchases and sales
+    await db.execute(delete(Purchase))
+    await db.execute(delete(Sale))
+    
+    # Clear menu data
+    await db.execute(delete(MenuItemIngredient))
+    await db.execute(delete(MenuItem))
+    
+    await db.commit()
+    return {"message": "All data cleared successfully"}
+
 # Include router
 app.include_router(api_router)
 
