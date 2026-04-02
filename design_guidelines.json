@@ -1,0 +1,122 @@
+{
+  "theme": "dark",
+  "archetype": "5",
+  "archetype_name": "Jewel & Luxury",
+  "domain": "Hospitality / Internal Operations",
+  "brand": "Ops AI (Enish Nigerian Restaurant)",
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Manrope",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-light",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-normal",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base leading-relaxed font-normal",
+      "small": "text-sm",
+      "overline": "text-xs uppercase tracking-[0.2em] font-semibold"
+    },
+    "rules": [
+      "No Inter or generic sans for headings.",
+      "Never default to bold for headers; use Light or Medium for elegance.",
+      "Apply tight letter spacing to headings."
+    ]
+  },
+  "colors": {
+    "background": {
+      "root": "#0A0A12",
+      "surface": "#1A1A2E",
+      "surface_hover": "#252540"
+    },
+    "primary": {
+      "base": "#D4A017",
+      "hover": "#E5B83A",
+      "active": "#B8860B",
+      "foreground": "#0A0A12"
+    },
+    "accent": {
+      "indigo": "#2B2B4A",
+      "indigo_light": "#4A4A7A"
+    },
+    "feedback": {
+      "error_variance": "#D62828",
+      "error_bg": "rgba(214, 40, 40, 0.15)",
+      "success": "#10B981"
+    },
+    "text": {
+      "primary": "#F5F5F0",
+      "secondary": "#8E8E9F",
+      "muted": "#5A5A70"
+    },
+    "borders": {
+      "subtle": "rgba(255, 255, 255, 0.05)",
+      "focus": "#D4A017"
+    }
+  },
+  "layout_spacing": {
+    "philosophy": "Mobile-first, generous spacing, large touch targets for operations.",
+    "scale": {
+      "container_padding": "p-4 sm:p-6",
+      "section_gap": "gap-8 sm:gap-12",
+      "element_gap": "gap-4"
+    },
+    "specifics": {
+      "touch_targets": "min-h-[64px] min-w-[64px] for all inventory counting interactions.",
+      "cards": "Flat background, 1px subtle inner border, no heavy drop shadows in dark mode.",
+      "navigation": "Bottom tab bar for mobile PWA layout, fixed with safe-area-inset."
+    }
+  },
+  "surfaces": {
+    "header": "backdrop-blur-xl bg-[#0A0A12]/80 border-b border-white/5",
+    "cards": "bg-[#1A1A2E] border border-white/5 rounded-xl",
+    "modals": "bg-[#1A1A2E] border border-[#2B2B4A] shadow-2xl backdrop-blur-3xl"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#D4A017] text-[#0A0A12] hover:bg-[#E5B83A] font-medium transition-all active:scale-95",
+      "inventory_tap": "w-full h-16 bg-[#1A1A2E] border border-[#2B2B4A] rounded-lg text-lg flex items-center justify-center data-[state=active]:bg-[#D4A017] data-[state=active]:text-[#0A0A12]"
+    },
+    "inputs": {
+      "pin_pad": "grid grid-cols-3 gap-4",
+      "pin_button": "h-20 w-20 rounded-full bg-[#1A1A2E] border border-[#2B2B4A] text-2xl flex items-center justify-center active:bg-[#D4A017] active:text-[#0A0A12] mx-auto"
+    },
+    "charts": "Use Recharts with custom tooltips. Colors: #D4A017 for sales/usage, #D62828 for variance."
+  },
+  "motion": {
+    "interactions": "Fast, responsive micro-interactions (active:scale-95) for counting buttons.",
+    "transitions": "Simple fade-in for page transitions. Avoid heavy 3D or parallax as this is a high-speed operational tool."
+  },
+  "icons_assets": {
+    "library": "@phosphor-icons/react",
+    "weight": "regular",
+    "usage": "Use Phosphor Icons for a premium, clean look that scales well."
+  },
+  "image_urls": [
+    {
+      "category": "logo",
+      "description": "Gold 'OPS AI' logo with chef hat and analytics arrow on dark background",
+      "url": "https://customer-assets.emergentagent.com/job_cost-control-ai/artifacts/usjulrm9_IMG_2004.png"
+    },
+    {
+      "category": "login_background",
+      "description": "Cozy restaurant interior featuring elegant golden chandeliers and a dimly lit ambiance",
+      "url": "https://images.pexels.com/photos/19343364/pexels-photo-19343364.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    },
+    {
+      "category": "dashboard_header_bg",
+      "description": "Abstract luxury dark restaurant interior texture",
+      "url": "https://images.pexels.com/photos/16046683/pexels-photo-16046683.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    }
+  ],
+  "instructions_to_main_agent": [
+    "INSTALLATION: Add '@phosphor-icons/react' for icons.",
+    "PWA SETUP: Ensure manifest.json and service worker are configured for mobile-first installation.",
+    "FONTS: Import 'Outfit' and 'Manrope' from Google Fonts. Apply globally in Tailwind.",
+    "LAYOUT: Build primarily for mobile screens (max-w-md mx-auto or full width on mobile devices). Include a bottom navigation bar for core views: Dashboard, Bar, Kitchen, Insights.",
+    "INVENTORY UI: The 'Bar Mode' MUST use massive touch targets (h-16 or h-20) for the 5 bottle levels (Full, 75%, 50%, 25%, Empty) arrayed as a visual grid or segmented control. Do not use native <select> for this.",
+    "THEMING: Force dark mode default. Set document background to '#0A0A12'.",
+    "TESTING: Every interactive element (login PIN pad, inventory tap buttons, nav links) MUST have a 'data-testid' attribute (e.g., 'data-testid=\"btn-bottle-75\"').",
+    "AI INSIGHTS: Present the Gemini AI 3 actionable recommendations in visually distinct 'Glassmorphism' cards to emphasize the 'AI' value add.",
+    "COMPONENT USAGE: Use Shadcn UI for forms, dialogs, and selects. Customize border radius (rounded-xl) and apply the dark charcoal/gold color scheme."
+  ]
+}
