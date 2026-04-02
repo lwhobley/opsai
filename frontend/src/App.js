@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from './components/ui/sonner';
 import { 
   House, Wine, CookingPot, Sparkle, DotsThree, 
-  ForkKnife, Users, FileArrowUp, SignOut, Gear, PlugsConnected, ChartBar
+  ForkKnife, Users, FileArrowUp, SignOut, Gear, PlugsConnected, ChartBar, ShoppingCart, CurrencyDollar
 } from '@phosphor-icons/react';
 
 // Pages
@@ -19,6 +19,8 @@ import UserManagement from './pages/UserManagement';
 import Integrations from './pages/Integrations';
 import Reports from './pages/Reports';
 import StaffCountMode from './pages/StaffCountMode';
+import PurchaseEntry from './pages/PurchaseEntry';
+import SalesEntry from './pages/SalesEntry';
 
 import './App.css';
 
@@ -61,6 +63,8 @@ const AppLayout = ({ children }) => {
     { path: '/menu', icon: ForkKnife, label: 'Menu Costing' },
     ...(isManager ? [{ path: '/import', icon: FileArrowUp, label: 'Import Data' }] : []),
     ...(isAdmin ? [{ path: '/users', icon: Users, label: 'Users' }] : []),
+    { path: '/purchases', icon: ShoppingCart, label: 'Purchases' },
+    { path: '/sales', icon: CurrencyDollar, label: 'Sales' },
     { path: '/reports', icon: ChartBar, label: 'Reports' },
     ...(isAdmin ? [{ path: '/integrations', icon: PlugsConnected, label: 'Integrations' }] : []),
   ];
@@ -229,6 +233,18 @@ const AppRouter = () => {
         </ProtectedRoute>
       } />
       
+      <Route path="/purchases" element={
+        <ProtectedRoute>
+          <AppLayout><PurchaseEntry /></AppLayout>
+        </ProtectedRoute>
+      } />
+
+      <Route path="/sales" element={
+        <ProtectedRoute>
+          <AppLayout><SalesEntry /></AppLayout>
+        </ProtectedRoute>
+      } />
+
       <Route path="/reports" element={
         <ProtectedRoute>
           <AppLayout><Reports /></AppLayout>

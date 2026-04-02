@@ -31,6 +31,25 @@ from models import (
     WasteLog
 )
 
+# ── Simple in-memory login rate limiter ──────────────────────────────────────
+from collections import defaultdict
+import time as _time
+
+_login_attempts: dict = defaultdict(list)   # ip -> [timestamps]
+LOGIN_RATE_LIMIT  = int(os.environ.get("LOGIN_RATE_LIMIT", "10"))   # max attempts
+LOGIN_RATE_WINDOW = int(os.environ.get("LOGIN_RATE_WINDOW", "300"))  # per N seconds (5 min)
+
+def _check_rate_limit(ip: str) -> None:
+    now = _time.monotonic()
+    window_start = now - LOGIN_RATE_WINDOW
+    _login_attempts[ip] = [t for t in _login_attempts[ip] if t > window_start]
+    if len(_login_attempts[ip]) >= LOGIN_RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait 5 minutes.")
+    _login_attempts[ip].append(now)
+
+def _clear_rate_limit(ip: str) -> None:
+    _login_attempts.pop(ip, None)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -205,12 +224,16 @@ async def require_manager(user: User = Depends(get_current_user)) -> User:
 
 # Auth endpoints
 @api_router.post("/auth/login", response_model=TokenResponse)
-async def login(data: PinLogin, db: AsyncSession = Depends(get_db)):
+async def login(data: PinLogin, request: Request, db: AsyncSession = Depends(get_db)):
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+
     result = await db.execute(select(User).where(User.is_active == True))
     users = result.scalars().all()
     
     for user in users:
         if verify_pin(data.pin, user.pin_hash):
+            _clear_rate_limit(client_ip)   # reset on success
             token = create_access_token(user.id, user.role)
             response = JSONResponse(content={
                 "access_token": token,
@@ -223,8 +246,9 @@ async def login(data: PinLogin, db: AsyncSession = Depends(get_db)):
                 }
             })
             response.set_cookie(
-                key="access_token", value=token, httponly=True, 
-                secure=False, samesite="lax", max_age=86400, path="/"
+                key="access_token", value=token, httponly=True,
+                secure=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
+                samesite="lax", max_age=86400, path="/"
             )
             return response
     
@@ -436,6 +460,34 @@ async def get_sales(days: int = 30, db: AsyncSession = Depends(get_db), user: Us
     return [{"id": s.id, "date": s.date.isoformat(), "total_sales": s.total_sales,
              "bar_sales": s.bar_sales, "food_sales": s.food_sales} for s in sales]
 
+@api_router.delete("/purchases/{purchase_id}")
+async def delete_purchase(purchase_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
+    result = await db.execute(select(Purchase).where(Purchase.id == purchase_id))
+    p = result.scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    await db.delete(p)
+    await db.commit()
+    return {"message": "Deleted"}
+
+@api_router.delete("/sales/{sale_id}")
+async def delete_sale(sale_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
+    result = await db.execute(select(Sale).where(Sale.id == sale_id))
+    s = result.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    await db.delete(s)
+    await db.commit()
+    return {"message": "Deleted"}
+
+# Settings — cost targets
+@api_router.get("/settings/targets")
+async def get_targets(user: User = Depends(get_current_user)):
+    return {
+        "pour_cost_target": float(os.environ.get("TARGET_POUR_COST_PCT", "20.0")),
+        "food_cost_target": float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0")),
+    }
+
 # Menu Items
 @api_router.post("/menu/items")
 async def create_menu_item(data: MenuItemCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
@@ -554,10 +606,10 @@ async def get_dashboard(days: int = 7, db: AsyncSession = Depends(get_db), user:
         "low_bar_items": low_bar_items[:10],
         "low_kitchen_items": low_kitchen_items[:10],
         "variance": {
-            "target_pour_cost": 20.0,
-            "target_food_cost": 30.0,
-            "pour_cost_variance": round(pour_cost_pct - 20.0, 1),
-            "food_cost_variance": round(food_cost_pct - 30.0, 1)
+            "target_pour_cost": float(os.environ.get("TARGET_POUR_COST_PCT", "20.0")),
+            "target_food_cost": float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0")),
+            "pour_cost_variance": round(pour_cost_pct - float(os.environ.get("TARGET_POUR_COST_PCT", "20.0")), 1),
+            "food_cost_variance": round(food_cost_pct - float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0")), 1)
         }
     }
 
@@ -869,7 +921,7 @@ async def report_pour_cost(days: int = 30, db: AsyncSession = Depends(get_db), u
 
     total_cogs   = sum(p.total_cost for p in purchases)
     pour_cost_pct = round((total_cogs / bar_sales * 100) if bar_sales > 0 else 0, 1)
-    target        = 20.0
+    target        = float(os.environ.get("TARGET_POUR_COST_PCT", "20.0"))
     variance      = round(pour_cost_pct - target, 1)
 
     # By category
@@ -914,7 +966,7 @@ async def report_food_cost(days: int = 30, db: AsyncSession = Depends(get_db), u
 
     total_cogs    = sum(p.total_cost for p in purchases)
     food_cost_pct = round((total_cogs / food_sales * 100) if food_sales > 0 else 0, 1)
-    target        = 30.0
+    target        = float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0"))
     variance      = round(food_cost_pct - target, 1)
 
     menu_result = await db.execute(
@@ -1086,8 +1138,9 @@ async def report_waste_summary(days: int = 30, db: AsyncSession = Depends(get_db
 # Toast POS Integration
 # ============================================================
 
-TOAST_AUTH_BASE = "https://ws-sandbox-api.eng.toasttab.com"   # swap to prod URL when live
-TOAST_API_BASE  = "https://ws-sandbox-api.eng.toasttab.com"
+TOAST_AUTH_BASE = os.environ.get("TOAST_API_BASE_URL", "https://ws-api.toasttab.com")
+TOAST_API_BASE  = os.environ.get("TOAST_API_BASE_URL", "https://ws-api.toasttab.com")
+# Set TOAST_API_BASE_URL=https://ws-sandbox-api.eng.toasttab.com for sandbox/testing
 
 # Pydantic schemas
 class ToastConnectRequest(BaseModel):
