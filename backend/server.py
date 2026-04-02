@@ -262,6 +262,18 @@ async def delete_user(user_id: str, db: AsyncSession = Depends(get_db), admin: U
     await db.commit()
     return {"message": "User deactivated"}
 
+@api_router.put("/users/{user_id}/pin")
+async def reset_user_pin(user_id: str, data: UserCreate, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    if not data.pin or not data.pin.isdigit() or len(data.pin) not in (4, 6):
+        raise HTTPException(status_code=400, detail="PIN must be exactly 4 or 6 digits")
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.pin_hash = hash_pin(data.pin)
+    await db.commit()
+    return {"message": "PIN updated"}
+
 # Bar Inventory endpoints
 @api_router.post("/inventory/bar/items", response_model=InventoryItemResponse)
 async def create_bar_item(data: InventoryItemCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
