@@ -733,18 +733,19 @@ async def startup():
             await db.commit()
             logger.info("Admin user created with PIN: " + admin_pin)
         
-        # Write test credentials
-        import os
-        os.makedirs('/app/memory', exist_ok=True)
-        with open('/app/memory/test_credentials.md', 'w') as f:
-            f.write("# Test Credentials\n\n")
-            f.write("## Admin User\n")
-            f.write(f"- PIN: {os.environ.get('ADMIN_PIN', '1234')}\n")
-            f.write("- Role: admin\n\n")
-            f.write("## Auth Endpoints\n")
-            f.write("- POST /api/auth/login - Login with PIN\n")
-            f.write("- GET /api/auth/me - Get current user\n")
-            f.write("- POST /api/auth/logout - Logout\n")
+    # Write test credentials
+    import pathlib
+    pathlib.Path('/app/memory').mkdir(parents=True, exist_ok=True)
+    admin_pin_val = os.environ.get('ADMIN_PIN', '1234')
+    with open('/app/memory/test_credentials.md', 'w') as f:
+        f.write("# Test Credentials\n\n")
+        f.write("## Admin User\n")
+        f.write(f"- PIN: {admin_pin_val}\n")
+        f.write("- Role: admin\n\n")
+        f.write("## Auth Endpoints\n")
+        f.write("- POST /api/auth/login - Login with PIN\n")
+        f.write("- GET /api/auth/me - Get current user\n")
+        f.write("- POST /api/auth/logout - Logout\n")
 
 from database import AsyncSessionLocal
 
