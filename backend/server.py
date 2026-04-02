@@ -21,11 +21,13 @@ import pandas as pd
 import pdfplumber
 from io import BytesIO
 import google.generativeai as genai
+import httpx
 
 from database import get_db, engine, Base
 from models import (
     User, InventoryItem, InventoryCount, KitchenInventoryItem, 
-    KitchenInventoryCount, Purchase, Sale, MenuItem, MenuItemIngredient
+    KitchenInventoryCount, Purchase, Sale, MenuItem, MenuItemIngredient,
+    ToastIntegration
 )
 
 # Configure logging
@@ -758,6 +760,260 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+
+
+# ============================================================
+# Toast POS Integration
+# ============================================================
+
+TOAST_AUTH_BASE = "https://ws-sandbox-api.eng.toasttab.com"   # swap to prod URL when live
+TOAST_API_BASE  = "https://ws-sandbox-api.eng.toasttab.com"
+
+# Pydantic schemas
+class ToastConnectRequest(BaseModel):
+    client_id: str
+    client_secret: str
+    restaurant_guid: str
+    restaurant_name: Optional[str] = None
+
+class ToastStatusResponse(BaseModel):
+    is_connected: bool
+    restaurant_name: Optional[str]
+    restaurant_guid: Optional[str]
+    last_synced_at: Optional[str]
+    last_sync_status: Optional[str]
+    last_sync_message: Optional[str]
+    connected_at: Optional[str]
+
+async def _get_toast_record(db: AsyncSession) -> Optional[ToastIntegration]:
+    """Return the single ToastIntegration row (singleton per deployment)."""
+    result = await db.execute(select(ToastIntegration).limit(1))
+    return result.scalar_one_or_none()
+
+async def _refresh_toast_token(record: ToastIntegration, db: AsyncSession) -> bool:
+    """Exchange client credentials for a new access token using Toast OAuth."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{TOAST_AUTH_BASE}/authentication/v1/authentication/login",
+                json={
+                    "clientId": record.client_id,
+                    "clientSecret": record.client_secret,
+                    "userAccessType": "TOAST_MACHINE_CLIENT",
+                },
+                headers={"Content-Type": "application/json"},
+            )
+        if resp.status_code != 200:
+            logger.error(f"Toast token refresh failed: {resp.status_code} {resp.text}")
+            return False
+        data = resp.json()
+        token = data.get("token", {})
+        record.access_token  = token.get("accessToken")
+        record.refresh_token = token.get("refreshToken")
+        expires_in = token.get("expiresIn", 3600)
+        record.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        record.is_connected = True
+        await db.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Toast token refresh exception: {e}")
+        return False
+
+async def _ensure_valid_token(record: ToastIntegration, db: AsyncSession) -> bool:
+    """Ensure the access token is valid, refreshing if needed."""
+    if not record.client_id or not record.client_secret:
+        return False
+    if not record.access_token:
+        return await _refresh_toast_token(record, db)
+    if record.token_expires_at:
+        # Refresh 5 min before expiry
+        if datetime.now(timezone.utc) >= record.token_expires_at - timedelta(minutes=5):
+            return await _refresh_toast_token(record, db)
+    return True
+
+# ── Endpoints ──────────────────────────────────────────────
+
+@api_router.post("/integrations/toast/connect")
+async def toast_connect(
+    data: ToastConnectRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Save Toast credentials and verify they work by fetching a token."""
+    record = await _get_toast_record(db)
+    if not record:
+        record = ToastIntegration()
+        db.add(record)
+
+    record.client_id       = data.client_id
+    record.client_secret   = data.client_secret
+    record.restaurant_guid = data.restaurant_guid
+    record.restaurant_name = data.restaurant_name or data.restaurant_guid
+    record.is_connected    = False
+    await db.flush()
+
+    ok = await _refresh_toast_token(record, db)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Could not authenticate with Toast. Check your Client ID, Client Secret, and Restaurant GUID.")
+
+    record.connected_at = datetime.now(timezone.utc)
+    await db.commit()
+    logger.info(f"Toast connected for restaurant: {record.restaurant_name}")
+    return {"message": "Toast connected successfully", "restaurant": record.restaurant_name}
+
+
+@api_router.get("/integrations/toast/status", response_model=ToastStatusResponse)
+async def toast_status(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return current connection status."""
+    record = await _get_toast_record(db)
+    if not record:
+        return ToastStatusResponse(
+            is_connected=False, restaurant_name=None, restaurant_guid=None,
+            last_synced_at=None, last_sync_status=None, last_sync_message=None, connected_at=None,
+        )
+    return ToastStatusResponse(
+        is_connected=record.is_connected,
+        restaurant_name=record.restaurant_name,
+        restaurant_guid=record.restaurant_guid,
+        last_synced_at=record.last_synced_at.isoformat() if record.last_synced_at else None,
+        last_sync_status=record.last_sync_status,
+        last_sync_message=record.last_sync_message,
+        connected_at=record.connected_at.isoformat() if record.connected_at else None,
+    )
+
+
+@api_router.post("/integrations/toast/disconnect")
+async def toast_disconnect(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Clear stored tokens and mark as disconnected."""
+    record = await _get_toast_record(db)
+    if record:
+        record.access_token    = None
+        record.refresh_token   = None
+        record.is_connected    = False
+        record.last_sync_status = None
+        await db.commit()
+    return {"message": "Toast disconnected"}
+
+
+@api_router.post("/integrations/toast/sync")
+async def toast_sync(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_manager),
+):
+    """Pull yesterday's sales from Toast and upsert into the sales table."""
+    record = await _get_toast_record(db)
+    if not record or not record.is_connected:
+        raise HTTPException(status_code=400, detail="Toast is not connected")
+
+    ok = await _ensure_valid_token(record, db)
+    if not ok:
+        record.last_sync_status  = "error"
+        record.last_sync_message = "Token refresh failed — check credentials"
+        await db.commit()
+        raise HTTPException(status_code=401, detail="Toast authentication failed. Reconnect in Integrations.")
+
+    # Pull orders for yesterday (local midnight → midnight)
+    today     = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday = today - timedelta(days=1)
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{TOAST_API_BASE}/orders/v2/ordersBulk",
+                headers={
+                    "Authorization": f"Bearer {record.access_token}",
+                    "Toast-Restaurant-External-ID": record.restaurant_guid,
+                },
+                params={
+                    "startDate": yesterday.strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+                    "endDate":   today.strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+                    "pageSize":  500,
+                },
+            )
+
+        if resp.status_code == 401:
+            record.last_sync_status  = "error"
+            record.last_sync_message = "Unauthorized — token may have expired"
+            await db.commit()
+            raise HTTPException(status_code=401, detail="Toast returned 401 — try reconnecting")
+
+        if resp.status_code != 200:
+            msg = f"Toast API error {resp.status_code}"
+            record.last_sync_status  = "error"
+            record.last_sync_message = msg
+            await db.commit()
+            raise HTTPException(status_code=502, detail=msg)
+
+        orders = resp.json()  # list of order objects
+
+        # Aggregate totals
+        total_sales = 0.0
+        bar_sales   = 0.0
+        food_sales  = 0.0
+
+        # Toast revenue centers: map by name contains "bar" → bar, else food
+        for order in orders:
+            checks = order.get("checks", [])
+            for check in checks:
+                amount = check.get("totalAmount", 0.0) or 0.0
+                total_sales += amount
+                # Revenue center heuristic — refine once you know your GUID
+                rc_name = (order.get("revenueCenter") or {}).get("name", "").lower()
+                if "bar" in rc_name or "beverage" in rc_name or "drink" in rc_name:
+                    bar_sales += amount
+                else:
+                    food_sales += amount
+
+        # Upsert into sales table for yesterday
+        existing = await db.execute(
+            select(Sale).where(
+                Sale.date >= yesterday,
+                Sale.date < today,
+            )
+        )
+        existing_sale = existing.scalar_one_or_none()
+
+        if existing_sale:
+            existing_sale.total_sales = round(total_sales, 2)
+            existing_sale.bar_sales   = round(bar_sales, 2)
+            existing_sale.food_sales  = round(food_sales, 2)
+        else:
+            new_sale = Sale(
+                date=yesterday,
+                total_sales=round(total_sales, 2),
+                bar_sales=round(bar_sales, 2),
+                food_sales=round(food_sales, 2),
+            )
+            db.add(new_sale)
+
+        record.last_synced_at    = datetime.now(timezone.utc)
+        record.last_sync_status  = "success"
+        record.last_sync_message = f"Synced {len(orders)} orders | ${total_sales:,.2f} total sales"
+        await db.commit()
+
+        return {
+            "message": "Sync complete",
+            "orders_processed": len(orders),
+            "total_sales": round(total_sales, 2),
+            "bar_sales":   round(bar_sales, 2),
+            "food_sales":  round(food_sales, 2),
+            "date": yesterday.strftime("%Y-%m-%d"),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Toast sync error: {e}")
+        record.last_sync_status  = "error"
+        record.last_sync_message = str(e)
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 # Startup event
 @app.on_event("startup")

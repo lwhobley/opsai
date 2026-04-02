@@ -134,3 +134,28 @@ class MenuItemIngredient(Base):
     cost_per_unit = Column(Float, default=0.0)
     
     menu_item = relationship('MenuItem', back_populates='ingredients')
+
+class ToastIntegration(Base):
+    """Stores Toast POS OAuth credentials and sync state for the restaurant."""
+    __tablename__ = 'toast_integrations'
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    # Toast OAuth credentials (set via env or admin UI)
+    client_id = Column(String(255), nullable=True)
+    client_secret = Column(String(255), nullable=True)  # encrypted at rest via env — never logged
+    # OAuth tokens
+    access_token = Column(Text, nullable=True)
+    refresh_token = Column(Text, nullable=True)
+    token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # Toast restaurant identity
+    restaurant_guid = Column(String(255), nullable=True)
+    restaurant_name = Column(String(255), nullable=True)
+    # Sync state
+    is_connected = Column(Boolean, default=False)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    last_sync_status = Column(String(50), nullable=True)   # success | error | pending
+    last_sync_message = Column(Text, nullable=True)
+    # Audit
+    connected_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
