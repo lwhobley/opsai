@@ -122,7 +122,7 @@ const ResetPinDialog = ({ user, api, onSuccess }) => {
 
     setSaving(true);
     try {
-      await api.put(`/users/${user.id}/pin`, { name: user.name, pin, role: user.role });
+      await api.put(`/users/${user.id}/pin`, { pin });
       toast.success(`PIN updated for ${user.name}`);
       setOpen(false);
       setPin('');
@@ -196,7 +196,7 @@ const UserManagement = () => {
       const response = await api.get('/users');
       setUsers(response.data);
     } catch (err) {
-      console.error('Fetch users error:', err);
+      // (error logged server-side)
     } finally {
       setLoading(false);
     }

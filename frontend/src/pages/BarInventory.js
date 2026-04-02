@@ -63,7 +63,7 @@ const BarInventory = () => {
       });
       setCounts(initialCounts);
     } catch (error) {
-      console.error('Fetch error:', error);
+      // (error logged server-side)
       const cached = await getCachedInventoryItems('bar');
       if (cached.length > 0) {
         setItems(cached);

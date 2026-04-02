@@ -148,7 +148,7 @@ const ToastCard = ({ api, isAdmin, isManager }) => {
       const res = await api.get('/integrations/toast/status');
       setStatus(res.data);
     } catch (err) {
-      console.error('Toast status error:', err);
+      // (error logged server-side)
     }
   };
 

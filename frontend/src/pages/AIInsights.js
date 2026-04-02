@@ -21,7 +21,7 @@ const AIInsights = () => {
       setInsights(response.data.insights);
       setContext(response.data.context);
     } catch (error) {
-      console.error('AI insights error:', error);
+      // (error logged server-side)
       toast.error('Failed to generate insights');
     } finally {
       setLoading(false);

@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from './components/ui/sonner';
 import { 
   House, Wine, CookingPot, Sparkle, DotsThree, 
-  ForkKnife, Users, FileArrowUp, SignOut, Gear, PlugsConnected, ChartBar, ShoppingCart, CurrencyDollar
+  ForkKnife, Users, FileArrowUp, SignOut, PlugsConnected, ChartBar, ShoppingCart, CurrencyDollar
 } from '@phosphor-icons/react';
 
 // Pages
@@ -23,6 +23,7 @@ import PurchaseEntry from './pages/PurchaseEntry';
 import SalesEntry from './pages/SalesEntry';
 
 import './App.css';
+import { syncOfflineCounts } from './utils/offlineStorage';
 
 const LOGO_URL = 'https://customer-assets.emergentagent.com/job_cost-control-ai/artifacts/usjulrm9_IMG_2004.png';
 
@@ -52,6 +53,20 @@ const AppLayout = ({ children }) => {
   const { logout, user, isAdmin, isManager } = useAuth();
   const [showMore, setShowMore] = React.useState(false);
 
+  // Sync offline counts whenever we come back online
+  React.useEffect(() => {
+    const handleOnline = () => {
+      syncOfflineCounts(api).then(synced => {
+        if (synced.bar > 0 || synced.kitchen > 0) {
+          const total = synced.bar + synced.kitchen;
+          console.info(`Synced ${total} offline count(s) to server`);
+        }
+      }).catch(() => {});
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [api]);
+
   const navItems = [
     { path: '/', icon: House, label: 'Home' },
     { path: '/bar', icon: Wine, label: 'Bar' },
@@ -61,7 +76,7 @@ const AppLayout = ({ children }) => {
 
   const moreItems = [
     { path: '/menu', icon: ForkKnife, label: 'Menu Costing' },
-    ...(isManager ? [{ path: '/import', icon: FileArrowUp, label: 'Import Data' }] : []),
+    // ImportData route kept for backwards compat but removed from nav (use Scan Receipt in Purchases)
     ...(isAdmin ? [{ path: '/users', icon: Users, label: 'Users' }] : []),
     { path: '/purchases', icon: ShoppingCart, label: 'Purchases' },
     { path: '/sales', icon: CurrencyDollar, label: 'Sales' },

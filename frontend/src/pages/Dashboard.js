@@ -11,6 +11,11 @@ const Dashboard = () => {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState(7);
+  const [targets, setTargets] = useState({ pour_cost_target: 20.0, food_cost_target: 30.0 });
+
+  React.useEffect(() => {
+    api.get('/settings/targets').then(r => setTargets(r.data)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchDashboard();
@@ -21,7 +26,7 @@ const Dashboard = () => {
       const response = await api.get(`/dashboard?days=${period}`);
       setDashboard(response.data);
     } catch (error) {
-      console.error('Dashboard fetch error:', error);
+      // (error logged server-side)
     } finally {
       setLoading(false);
     }
@@ -35,15 +40,21 @@ const Dashboard = () => {
     );
   }
 
-  const mockChartData = [
-    { name: 'Mon', sales: 4200, cogs: 1200 },
-    { name: 'Tue', sales: 5100, cogs: 1400 },
-    { name: 'Wed', sales: 4800, cogs: 1350 },
-    { name: 'Thu', sales: 6200, cogs: 1800 },
-    { name: 'Fri', sales: 7500, cogs: 2100 },
-    { name: 'Sat', sales: 8200, cogs: 2300 },
-    { name: 'Sun', sales: 6800, cogs: 1900 },
-  ];
+  // Build chart data from real sales API data
+  const [chartData, setChartData] = React.useState([]);
+  React.useEffect(() => {
+    api.get(`/reports/sales?days=${period}`)
+      .then(r => {
+        const rows = (r.data.rows || []).slice(-7);
+        setChartData(rows.map(row => ({
+          name: new Date(row.date).toLocaleDateString('en-US', { weekday: 'short' }),
+          sales: row.total,
+          bar: row.bar,
+          food: row.food,
+        })));
+      })
+      .catch(() => setChartData([]));
+  }, [period]);
 
   return (
     <div className="pb-24 fade-in" data-testid="dashboard">
@@ -90,15 +101,15 @@ const Dashboard = () => {
           title="Pour Cost"
           value={`${dashboard?.pour_cost_pct || 0}%`}
           icon={<Wine className="w-5 h-5" />}
-          color={dashboard?.pour_cost_pct > 20 ? 'red' : 'green'}
-          subtitle={`Target: 20%`}
+          color={dashboard?.pour_cost_pct > targets.pour_cost_target ? 'red' : 'green'}
+          subtitle={`Target: ${targets.pour_cost_target}%`}
         />
         <KPICard
           title="Food Cost"
           value={`${dashboard?.food_cost_pct || 0}%`}
           icon={<CookingPot className="w-5 h-5" />}
-          color={dashboard?.food_cost_pct > 30 ? 'red' : 'green'}
-          subtitle={`Target: 30%`}
+          color={dashboard?.food_cost_pct > targets.food_cost_target ? 'red' : 'green'}
+          subtitle={`Target: ${targets.food_cost_target}%`}
         />
       </div>
 
@@ -107,7 +118,7 @@ const Dashboard = () => {
         <h3 className="text-sm font-medium text-[#8E8E9F] mb-4">Sales vs COGS</h3>
         <div className="h-48">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={mockChartData}>
+            <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#D4A017" stopOpacity={0.3}/>

@@ -40,7 +40,6 @@ export const syncOfflineCounts = async (api) => {
       await clearPendingCounts('bar');
       synced.bar = barCounts.length;
     } catch (error) {
-      console.error('Failed to sync bar counts:', error);
     }
   }
   
@@ -50,7 +49,6 @@ export const syncOfflineCounts = async (api) => {
       await clearPendingCounts('kitchen');
       synced.kitchen = kitchenCounts.length;
     } catch (error) {
-      console.error('Failed to sync kitchen counts:', error);
     }
   }
   

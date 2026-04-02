@@ -3,18 +3,12 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Text, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from database import Base
-import enum
 
 def generate_uuid():
     return str(uuid.uuid4())
 
 def utc_now():
     return datetime.now(timezone.utc)
-
-class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    MANAGER = "manager"
-    STAFF = "staff"
 
 class User(Base):
     __tablename__ = 'users'

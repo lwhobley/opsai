@@ -23,7 +23,7 @@ from io import BytesIO
 import google.generativeai as genai
 import httpx
 
-from database import get_db, engine, Base
+from database import get_db, engine, Base, AsyncSessionLocal
 from models import (
     User, InventoryItem, InventoryCount, KitchenInventoryItem, 
     KitchenInventoryCount, Purchase, Sale, MenuItem, MenuItemIngredient,
@@ -32,6 +32,7 @@ from models import (
 )
 
 # ── Simple in-memory login rate limiter ──────────────────────────────────────
+from contextlib import asynccontextmanager
 from collections import defaultdict
 import time as _time
 
@@ -64,7 +65,30 @@ if not JWT_SECRET:
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
-app = FastAPI(title="Ops AI - Restaurant Operations")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup ──────────────────────────────────────────────
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.role == "admin"))
+        admin = result.scalar_one_or_none()
+        if not admin:
+            admin_pin = os.environ.get("ADMIN_PIN")
+            if not admin_pin:
+                raise RuntimeError("ADMIN_PIN environment variable is required to seed the admin user.")
+            admin_user = User(name="Admin", pin_hash=hash_pin(admin_pin), role="admin")
+            db.add(admin_user)
+            await db.commit()
+            logger.info("Admin user seeded from ADMIN_PIN env var.")
+
+    yield  # app is running
+
+    # ── Shutdown ─────────────────────────────────────────────
+    await engine.dispose()
+
+app = FastAPI(title="Ops AI - Restaurant Operations", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
 # Pydantic Models
@@ -289,8 +313,11 @@ async def delete_user(user_id: str, db: AsyncSession = Depends(get_db), admin: U
     await db.commit()
     return {"message": "User deactivated"}
 
+class PinReset(BaseModel):
+    pin: str
+
 @api_router.put("/users/{user_id}/pin")
-async def reset_user_pin(user_id: str, data: UserCreate, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+async def reset_user_pin(user_id: str, data: PinReset, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
     if not data.pin or not data.pin.isdigit() or len(data.pin) not in (4, 6):
         raise HTTPException(status_code=400, detail="PIN must be exactly 4 or 6 digits")
     result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
@@ -299,7 +326,7 @@ async def reset_user_pin(user_id: str, data: UserCreate, db: AsyncSession = Depe
         raise HTTPException(status_code=404, detail="User not found")
     user.pin_hash = hash_pin(data.pin)
     await db.commit()
-    return {"message": "PIN updated"}
+    return {"message": "PIN updated successfully"}
 
 # Bar Inventory endpoints
 @api_router.post("/inventory/bar/items", response_model=InventoryItemResponse)
@@ -426,7 +453,10 @@ async def delete_kitchen_item(item_id: str, db: AsyncSession = Depends(get_db), 
 # Purchases
 @api_router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
-    purchase = Purchase(**data.model_dump())
+    dump = data.model_dump()
+    # Ensure both fields are consistent — purchase_type is the canonical field
+    dump['item_type'] = dump.get('purchase_type') or dump.get('item_type')
+    purchase = Purchase(**dump)
     db.add(purchase)
     await db.commit()
     return {"message": "Purchase recorded", "id": purchase.id}
@@ -524,99 +554,120 @@ async def add_menu_ingredient(data: MenuIngredientCreate, db: AsyncSession = Dep
     return {"message": "Ingredient added", "id": ingredient.id}
 
 # Dashboard / Analytics
-@api_router.get("/dashboard")
-async def get_dashboard(days: int = 7, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def _compute_dashboard(days: int, db: AsyncSession) -> dict:
+    """Shared dashboard logic — called by route and AI insights."""
+    from sqlalchemy import text
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
-    
-    # Get sales data
+
+    # Sales totals
     sales_result = await db.execute(
         select(func.sum(Sale.total_sales), func.sum(Sale.bar_sales), func.sum(Sale.food_sales))
         .where(Sale.date >= start_date)
     )
     sales_data = sales_result.first()
-    total_sales = sales_data[0] or 0
-    bar_sales = sales_data[1] or 0
-    food_sales = sales_data[2] or 0
-    
-    # Get purchases (COGS)
-    purchases_result = await db.execute(
-        select(func.sum(Purchase.total_cost))
+    total_sales  = sales_data[0] or 0
+    bar_sales    = sales_data[1] or 0
+    food_sales   = sales_data[2] or 0
+
+    # COGS totals — single query grouped by type
+    cogs_result = await db.execute(
+        select(Purchase.purchase_type, func.sum(Purchase.total_cost))
         .where(Purchase.date >= start_date)
+        .group_by(Purchase.purchase_type)
     )
-    total_purchases = purchases_result.scalar() or 0
-    
-    # Bar purchases
-    bar_purchases_result = await db.execute(
-        select(func.sum(Purchase.total_cost))
-        .where(and_(Purchase.date >= start_date, Purchase.purchase_type == 'bar'))
-    )
-    bar_purchases = bar_purchases_result.scalar() or 0
-    
-    # Kitchen purchases  
-    kitchen_purchases_result = await db.execute(
-        select(func.sum(Purchase.total_cost))
-        .where(and_(Purchase.date >= start_date, Purchase.purchase_type == 'kitchen'))
-    )
-    kitchen_purchases = kitchen_purchases_result.scalar() or 0
-    
-    # Calculate costs
-    pour_cost_pct = (bar_purchases / bar_sales * 100) if bar_sales > 0 else 0
-    food_cost_pct = (kitchen_purchases / food_sales * 100) if food_sales > 0 else 0
-    total_cogs_pct = (total_purchases / total_sales * 100) if total_sales > 0 else 0
-    
-    # Get low stock items (bar items at 25% or less)
-    low_bar_items = []
-    bar_items_result = await db.execute(select(InventoryItem).where(InventoryItem.is_active == True))
-    for item in bar_items_result.scalars().all():
-        count_result = await db.execute(
-            select(InventoryCount.level_percentage)
-            .where(InventoryCount.item_id == item.id)
-            .order_by(desc(InventoryCount.timestamp))
-            .limit(1)
+    cogs_by_type = {row[0]: row[1] or 0 for row in cogs_result.all()}
+    total_purchases   = sum(cogs_by_type.values())
+    bar_purchases     = cogs_by_type.get('bar', 0)
+    kitchen_purchases = cogs_by_type.get('kitchen', 0)
+
+    pour_cost_pct  = (bar_purchases    / bar_sales    * 100) if bar_sales    > 0 else 0
+    food_cost_pct  = (kitchen_purchases / food_sales   * 100) if food_sales  > 0 else 0
+    total_cogs_pct = (total_purchases   / total_sales  * 100) if total_sales > 0 else 0
+
+    target_pour = float(os.environ.get("TARGET_POUR_COST_PCT", "20.0"))
+    target_food = float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0"))
+
+    # Low stock bar items — single query using subquery for latest count per item
+    bar_low_sq = (
+        select(
+            InventoryCount.item_id,
+            func.max(InventoryCount.timestamp).label("latest_ts")
         )
-        level = count_result.scalar_one_or_none()
-        if level is not None and level <= 25:
-            low_bar_items.append({"name": item.name, "level": level, "location": item.location})
-    
-    # Get low stock kitchen items
-    low_kitchen_items = []
-    kitchen_items_result = await db.execute(select(KitchenInventoryItem).where(KitchenInventoryItem.is_active == True))
-    for item in kitchen_items_result.scalars().all():
-        count_result = await db.execute(
-            select(KitchenInventoryCount.quantity)
-            .where(KitchenInventoryCount.item_id == item.id)
-            .order_by(desc(KitchenInventoryCount.timestamp))
-            .limit(1)
+        .group_by(InventoryCount.item_id)
+        .subquery()
+    )
+    bar_low_result = await db.execute(
+        select(InventoryItem.name, InventoryItem.location, InventoryCount.level_percentage)
+        .join(bar_low_sq, InventoryItem.id == bar_low_sq.c.item_id)
+        .join(InventoryCount, and_(
+            InventoryCount.item_id == bar_low_sq.c.item_id,
+            InventoryCount.timestamp == bar_low_sq.c.latest_ts
+        ))
+        .where(InventoryItem.is_active == True)
+        .where(InventoryCount.level_percentage <= 25)
+    )
+    low_bar_items = [
+        {"name": r[0], "location": r[1], "level": r[2]}
+        for r in bar_low_result.all()
+    ]
+
+    # Low stock kitchen items — single query using subquery
+    kit_low_sq = (
+        select(
+            KitchenInventoryCount.item_id,
+            func.max(KitchenInventoryCount.timestamp).label("latest_ts")
         )
-        qty = count_result.scalar_one_or_none()
-        if qty is not None and item.par_level > 0 and qty < item.par_level:
-            low_kitchen_items.append({"name": item.name, "quantity": qty, "par_level": item.par_level, "location": item.location})
-    
+        .group_by(KitchenInventoryCount.item_id)
+        .subquery()
+    )
+    kit_low_result = await db.execute(
+        select(
+            KitchenInventoryItem.name, KitchenInventoryItem.location,
+            KitchenInventoryItem.par_level, KitchenInventoryCount.quantity
+        )
+        .join(kit_low_sq, KitchenInventoryItem.id == kit_low_sq.c.item_id)
+        .join(KitchenInventoryCount, and_(
+            KitchenInventoryCount.item_id == kit_low_sq.c.item_id,
+            KitchenInventoryCount.timestamp == kit_low_sq.c.latest_ts
+        ))
+        .where(KitchenInventoryItem.is_active == True)
+        .where(KitchenInventoryItem.par_level > 0)
+        .where(KitchenInventoryCount.quantity < KitchenInventoryItem.par_level)
+    )
+    low_kitchen_items = [
+        {"name": r[0], "location": r[1], "par_level": r[2], "quantity": r[3]}
+        for r in kit_low_result.all()
+    ]
+
     return {
         "period_days": days,
         "total_sales": round(total_sales, 2),
-        "bar_sales": round(bar_sales, 2),
-        "food_sales": round(food_sales, 2),
-        "total_cogs": round(total_purchases, 2),
-        "bar_cogs": round(bar_purchases, 2),
-        "food_cogs": round(kitchen_purchases, 2),
-        "pour_cost_pct": round(pour_cost_pct, 1),
-        "food_cost_pct": round(food_cost_pct, 1),
-        "total_cogs_pct": round(total_cogs_pct, 1),
-        "low_bar_items": low_bar_items[:10],
+        "bar_sales":   round(bar_sales, 2),
+        "food_sales":  round(food_sales, 2),
+        "total_cogs":  round(total_purchases, 2),
+        "bar_cogs":    round(bar_purchases, 2),
+        "food_cogs":   round(kitchen_purchases, 2),
+        "pour_cost_pct":   round(pour_cost_pct, 1),
+        "food_cost_pct":   round(food_cost_pct, 1),
+        "total_cogs_pct":  round(total_cogs_pct, 1),
+        "low_bar_items":     low_bar_items[:10],
         "low_kitchen_items": low_kitchen_items[:10],
         "variance": {
-            "target_pour_cost": float(os.environ.get("TARGET_POUR_COST_PCT", "20.0")),
-            "target_food_cost": float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0")),
-            "pour_cost_variance": round(pour_cost_pct - float(os.environ.get("TARGET_POUR_COST_PCT", "20.0")), 1),
-            "food_cost_variance": round(food_cost_pct - float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0")), 1)
-        }
+            "target_pour_cost": target_pour,
+            "target_food_cost": target_food,
+            "pour_cost_variance": round(pour_cost_pct - target_pour, 1),
+            "food_cost_variance": round(food_cost_pct - target_food, 1),
+        },
     }
+
+@api_router.get("/dashboard")
+async def get_dashboard(days: int = 7, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    return await _compute_dashboard(days, db)
 
 # AI Insights
 @api_router.post("/ai/insights")
 async def get_ai_insights(request: AIInsightRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    dashboard_data = await get_dashboard(request.date_range_days, db)
+    dashboard_data = await _compute_dashboard(request.date_range_days, db)
     
     # Get menu costing data
     menu_result = await db.execute(
@@ -674,7 +725,7 @@ Respond in this exact JSON format:
 Be direct, operational, and profit-focused. Write like an experienced GM."""
 
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel(os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash'))
         response = model.generate_content(prompt)
         response_text = response.text.strip()
         
@@ -844,7 +895,7 @@ Rules:
 - All costs must be numbers (no currency symbols)"""
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel(os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-1.5-flash"))
 
         # Pass image/PDF as base64 inline
         b64_data = base64.b64encode(content).decode("utf-8")
@@ -932,9 +983,14 @@ async def health():
     return {"status": "healthy"}
 
 # Admin endpoint to clear all data
+class ClearDataConfirm(BaseModel):
+    confirm: str  # must equal "DELETE_ALL"
+
 @api_router.delete("/admin/clear-data")
-async def clear_all_data(db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
-    """Clear all sample/test data from the database"""
+async def clear_all_data(body: ClearDataConfirm, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    """Clear all data — requires explicit confirmation body: {"confirm": "DELETE_ALL"}"""
+    if body.confirm != "DELETE_ALL":
+        raise HTTPException(status_code=400, detail='Send {"confirm": "DELETE_ALL"} to confirm.')
     from sqlalchemy import delete
     
     # Clear counts first (foreign keys)
@@ -987,18 +1043,15 @@ class WasteLogCreate(BaseModel):
     unit: Optional[str] = None
     estimated_cost: float = 0.0
     notes: Optional[str] = None
-    date: Optional[str] = None      # ISO date string; defaults to now
+    date: Optional[datetime] = None  # defaults to now if not supplied
 
 # ── Waste Log ──────────────────────────────────────────────
 
 @api_router.post("/reports/waste")
 async def log_waste(data: WasteLogCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    log_date = datetime.now(timezone.utc)
-    if data.date:
-        try:
-            log_date = datetime.fromisoformat(data.date).replace(tzinfo=timezone.utc)
-        except Exception:
-            pass
+    log_date = data.date if data.date else datetime.now(timezone.utc)
+    if log_date.tzinfo is None:
+        log_date = log_date.replace(tzinfo=timezone.utc)
     entry = WasteLog(
         item_name=data.item_name, item_type=data.item_type, reason=data.reason,
         quantity=data.quantity, unit=data.unit, estimated_cost=data.estimated_cost,
@@ -1297,9 +1350,12 @@ async def report_waste_summary(days: int = 30, db: AsyncSession = Depends(get_db
 # Toast POS Integration
 # ============================================================
 
-TOAST_AUTH_BASE = os.environ.get("TOAST_API_BASE_URL", "https://ws-api.toasttab.com")
-TOAST_API_BASE  = os.environ.get("TOAST_API_BASE_URL", "https://ws-api.toasttab.com")
-# Set TOAST_API_BASE_URL=https://ws-sandbox-api.eng.toasttab.com for sandbox/testing
+# Toast uses the same base URL for both auth and API in production
+# Override individually for sandbox testing
+TOAST_AUTH_BASE = os.environ.get("TOAST_AUTH_URL", os.environ.get("TOAST_API_BASE_URL", "https://ws-api.toasttab.com"))
+TOAST_API_BASE  = os.environ.get("TOAST_API_URL",  os.environ.get("TOAST_API_BASE_URL", "https://ws-api.toasttab.com"))
+# For sandbox: set TOAST_API_BASE_URL=https://ws-sandbox-api.eng.toasttab.com
+# Or set TOAST_AUTH_URL and TOAST_API_URL individually
 
 # Pydantic schemas
 class ToastConnectRequest(BaseModel):
@@ -1547,27 +1603,4 @@ async def toast_sync(
         await db.commit()
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
-# Startup event
-@app.on_event("startup")
-async def startup():
-    # Create tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    # Seed admin user — ADMIN_PIN must be set in environment; no insecure default
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.role == "admin"))
-        admin = result.scalar_one_or_none()
-        if not admin:
-            admin_pin = os.environ.get('ADMIN_PIN')
-            if not admin_pin:
-                raise RuntimeError("ADMIN_PIN environment variable is required to seed the admin user.")
-            admin_user = User(name="Admin", pin_hash=hash_pin(admin_pin), role="admin")
-            db.add(admin_user)
-            await db.commit()
-            logger.info("Admin user seeded from ADMIN_PIN env var.")
-from database import AsyncSessionLocal
 
-@app.on_event("shutdown")
-async def shutdown():
-    await engine.dispose()

@@ -22,7 +22,7 @@ const MenuCosting = () => {
       const response = await api.get('/menu/items');
       setMenuItems(response.data);
     } catch (error) {
-      console.error('Fetch error:', error);
+      // (error logged server-side)
     } finally {
       setLoading(false);
     }

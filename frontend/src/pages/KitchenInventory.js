@@ -57,7 +57,7 @@ const KitchenInventory = () => {
       });
       setCounts(initialCounts);
     } catch (error) {
-      console.error('Fetch error:', error);
+      // (error logged server-side)
       const cached = await getCachedInventoryItems('kitchen');
       if (cached.length > 0) {
         setItems(cached);

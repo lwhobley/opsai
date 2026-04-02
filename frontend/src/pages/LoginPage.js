@@ -11,16 +11,22 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
 
   const handlePinInput = async (digit) => {
-    if (pin.length >= 4) return;
-    
+    if (pin.length >= 6) return;
+
     const newPin = pin + digit;
     setPin(newPin);
     setError('');
 
-    if (newPin.length === 4) {
+    // Auto-submit at 4 digits; for 6-digit PINs user taps the last digit
+    if (newPin.length === 4 || newPin.length === 6) {
       setLoading(true);
       const result = await login(newPin);
       if (!result.success) {
+        // If 4-digit attempt fails, allow continuing to 6 digits
+        if (newPin.length === 4) {
+          setLoading(false);
+          return; // don't clear — let them keep typing
+        }
         setError(result.error);
         setPin('');
       }
@@ -57,12 +63,12 @@ const LoginPage = () => {
 
       {/* PIN Display */}
       <div className="mb-8 flex gap-3" data-testid="pin-display">
-        {[0, 1, 2, 3].map((i) => (
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <div
             key={i}
-            className={`w-4 h-4 rounded-full border-2 transition-all duration-200 ${
-              pin.length > i 
-                ? 'bg-[#D4A017] border-[#D4A017]' 
+            className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
+              pin.length > i
+                ? 'bg-[#D4A017] border-[#D4A017]'
                 : 'border-[#4A4A7A] bg-transparent'
             }`}
           />
@@ -140,7 +146,7 @@ const LoginPage = () => {
 
       {/* Footer */}
       <p className="mt-8 text-xs text-[#5A5A70]">
-        Enter your 4-digit PIN to access
+        Enter your PIN to access
       </p>
     </div>
   );
