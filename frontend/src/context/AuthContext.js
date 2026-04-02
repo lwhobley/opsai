@@ -18,17 +18,22 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('ops_ai_token'));
 
-  const api = axios.create({
-    baseURL: `${API_URL}/api`,
-    withCredentials: true,
-  });
+  const api = React.useMemo(() => {
+    const instance = axios.create({
+      baseURL: `${API_URL}/api`,
+      withCredentials: true,
+    });
 
-  api.interceptors.request.use((config) => {
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  });
+    instance.interceptors.request.use((config) => {
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    });
+
+    return instance;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const checkAuth = useCallback(async () => {
     if (!token) {

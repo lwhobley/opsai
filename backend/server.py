@@ -36,7 +36,9 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=os.environ.get('GEMINI_API_KEY'))
 
 # JWT Config
-JWT_SECRET = os.environ.get('JWT_SECRET', 'ops_ai_secret')
+JWT_SECRET = os.environ.get('JWT_SECRET')
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET environment variable is required and must not be empty")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
@@ -270,7 +272,7 @@ async def create_bar_item(data: InventoryItemCreate, db: AsyncSession = Depends(
     return InventoryItemResponse(**{**item.__dict__, 'latest_count': None})
 
 @api_router.get("/inventory/bar/items", response_model=List[InventoryItemResponse])
-async def get_bar_items(location: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_bar_items(location: Optional[str] = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     query = select(InventoryItem).where(InventoryItem.is_active == True)
     if location:
         query = query.where(InventoryItem.location == location)
@@ -330,7 +332,7 @@ async def create_kitchen_item(data: KitchenItemCreate, db: AsyncSession = Depend
     return KitchenItemResponse(**{**item.__dict__, 'latest_count': None})
 
 @api_router.get("/inventory/kitchen/items", response_model=List[KitchenItemResponse])
-async def get_kitchen_items(location: Optional[str] = None, station: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_kitchen_items(location: Optional[str] = None, station: Optional[str] = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     query = select(KitchenInventoryItem).where(KitchenInventoryItem.is_active == True)
     if location:
         query = query.where(KitchenInventoryItem.location == location)
@@ -391,7 +393,7 @@ async def create_purchase(data: PurchaseCreate, db: AsyncSession = Depends(get_d
     return {"message": "Purchase recorded", "id": purchase.id}
 
 @api_router.get("/purchases")
-async def get_purchases(days: int = 30, db: AsyncSession = Depends(get_db)):
+async def get_purchases(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
     result = await db.execute(
         select(Purchase).where(Purchase.date >= start_date).order_by(desc(Purchase.date))
@@ -410,7 +412,7 @@ async def create_sale(data: SaleCreate, db: AsyncSession = Depends(get_db), user
     return {"message": "Sale recorded", "id": sale.id}
 
 @api_router.get("/sales")
-async def get_sales(days: int = 30, db: AsyncSession = Depends(get_db)):
+async def get_sales(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
     result = await db.execute(
         select(Sale).where(Sale.date >= start_date).order_by(desc(Sale.date))
@@ -428,7 +430,7 @@ async def create_menu_item(data: MenuItemCreate, db: AsyncSession = Depends(get_
     return {"message": "Menu item created", "id": item.id}
 
 @api_router.get("/menu/items")
-async def get_menu_items(db: AsyncSession = Depends(get_db)):
+async def get_menu_items(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(
         select(MenuItem).where(MenuItem.is_active == True).options(selectinload(MenuItem.ingredients))
     )
@@ -456,7 +458,7 @@ async def add_menu_ingredient(data: MenuIngredientCreate, db: AsyncSession = Dep
 
 # Dashboard / Analytics
 @api_router.get("/dashboard")
-async def get_dashboard(days: int = 7, db: AsyncSession = Depends(get_db)):
+async def get_dashboard(days: int = 7, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
     
     # Get sales data
@@ -731,13 +733,18 @@ async def clear_all_data(db: AsyncSession = Depends(get_db), admin: User = Depen
 # Include router
 app.include_router(api_router)
 
-# CORS
+# CORS — restrict to explicit frontend origin(s) only
+_frontend_url = os.environ.get('FRONTEND_URL', '')
+_allowed_origins = [o.strip() for o in _frontend_url.split(',') if o.strip()] if _frontend_url else []
+if not _allowed_origins:
+    logger.warning("FRONTEND_URL is not set — CORS will block all cross-origin requests. Set FRONTEND_URL in your .env.")
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # Startup event
@@ -747,31 +754,18 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # Seed admin user
+    # Seed admin user — ADMIN_PIN must be set in environment; no insecure default
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(User).where(User.role == "admin"))
         admin = result.scalar_one_or_none()
         if not admin:
-            admin_pin = os.environ.get('ADMIN_PIN', '1234')
+            admin_pin = os.environ.get('ADMIN_PIN')
+            if not admin_pin:
+                raise RuntimeError("ADMIN_PIN environment variable is required to seed the admin user.")
             admin_user = User(name="Admin", pin_hash=hash_pin(admin_pin), role="admin")
             db.add(admin_user)
             await db.commit()
-            logger.info("Admin user created with PIN: " + admin_pin)
-        
-    # Write test credentials
-    import pathlib
-    pathlib.Path('/app/memory').mkdir(parents=True, exist_ok=True)
-    admin_pin_val = os.environ.get('ADMIN_PIN', '1234')
-    with open('/app/memory/test_credentials.md', 'w') as f:
-        f.write("# Test Credentials\n\n")
-        f.write("## Admin User\n")
-        f.write(f"- PIN: {admin_pin_val}\n")
-        f.write("- Role: admin\n\n")
-        f.write("## Auth Endpoints\n")
-        f.write("- POST /api/auth/login - Login with PIN\n")
-        f.write("- GET /api/auth/me - Get current user\n")
-        f.write("- POST /api/auth/logout - Logout\n")
-
+            logger.info("Admin user seeded from ADMIN_PIN env var.")
 from database import AsyncSessionLocal
 
 @app.on_event("shutdown")
