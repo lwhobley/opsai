@@ -8,16 +8,16 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
-    extensions: ['.jsx', '.js', '.tsx', '.ts', '.json'],
   },
   esbuild: {
+    // Treat ALL js/jsx files as JSX so Rollup doesn't choke on JSX syntax
     loader: 'jsx',
-    include: /src\/.*\.js$/,
-    exclude: [],
+    include: /.*\.(js|jsx)$/,
+    exclude: /node_modules/,
   },
   optimizeDeps: {
     esbuildOptions: {
-      loader: { '.js': 'jsx' },
+      loader: { '.js': 'jsx', '.jsx': 'jsx' },
     },
   },
   server: {
@@ -26,8 +26,5 @@ export default defineConfig({
   build: {
     outDir: 'build',
     sourcemap: false,
-    rollupOptions: {
-      input: path.resolve(__dirname, 'index.html'),
-    },
   },
 });
