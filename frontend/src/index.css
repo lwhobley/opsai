@@ -135,3 +135,13 @@ button, a {
     display: contents !important;
   }
 }
+
+/* Hide Emergent badge */
+#emergent-badge,
+[id*="emergent"],
+a[href*="emergent.sh"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
