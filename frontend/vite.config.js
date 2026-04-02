@@ -3,7 +3,17 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react({
+      // Treat all .js files as JSX (CRA compatibility)
+      include: ['**/*.js', '**/*.jsx'],
+    }),
+  ],
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: { '.js': 'jsx' },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
