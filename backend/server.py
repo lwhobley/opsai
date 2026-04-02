@@ -763,6 +763,165 @@ async def import_inventory(file: UploadFile = File(...), inventory_type: str = "
         logger.error(f"Import error: {e}")
         raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
 
+
+# ============================================================
+# Receipt / Invoice OCR Parsing (Gemini Vision)
+# ============================================================
+
+import base64
+
+class ReceiptParseResult(BaseModel):
+    vendor: Optional[str] = None
+    date: Optional[str] = None          # ISO date string YYYY-MM-DD
+    items: List[dict] = []              # [{name, quantity, unit, unit_cost, total_cost, purchase_type}]
+    subtotal: Optional[float] = None
+    tax: Optional[float] = None
+    total: Optional[float] = None
+    notes: Optional[str] = None
+    raw_text: Optional[str] = None      # for debugging
+
+@api_router.post("/import/receipt")
+async def parse_receipt(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_manager),
+):
+    """
+    Accept a photo (JPEG/PNG/WEBP) or PDF of a receipt/invoice.
+    Use Gemini Vision to extract line items, then save as Purchase records.
+    Returns the parsed data for user review before confirming.
+    """
+    content = await file.read()
+    filename = file.filename.lower() if file.filename else ""
+
+    # Determine media type
+    if filename.endswith((".jpg", ".jpeg")) or file.content_type == "image/jpeg":
+        media_type = "image/jpeg"
+    elif filename.endswith(".png") or file.content_type == "image/png":
+        media_type = "image/png"
+    elif filename.endswith(".webp") or file.content_type == "image/webp":
+        media_type = "image/webp"
+    elif filename.endswith(".pdf") or file.content_type == "application/pdf":
+        media_type = "application/pdf"
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Upload a photo (JPEG/PNG/WEBP) or PDF.")
+
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum 20MB.")
+
+    # Build Gemini prompt
+    prompt = """You are a receipt and invoice parser for a restaurant.
+
+Analyze this receipt or invoice image and extract ALL line items.
+
+Return ONLY valid JSON in this exact format, no markdown, no explanation:
+{
+  "vendor": "vendor/supplier name or null",
+  "date": "YYYY-MM-DD or null",
+  "items": [
+    {
+      "name": "product name",
+      "quantity": 1.0,
+      "unit": "bottle/case/lb/each/etc or null",
+      "unit_cost": 0.00,
+      "total_cost": 0.00,
+      "purchase_type": "bar or kitchen or supply or other"
+    }
+  ],
+  "subtotal": 0.00,
+  "tax": 0.00,
+  "total": 0.00,
+  "notes": "any relevant notes or null"
+}
+
+Rules:
+- purchase_type: "bar" for alcohol/beverages, "kitchen" for food ingredients, "supply" for cleaning/paper goods, "other" for everything else
+- If a field is unknown, use null
+- quantity defaults to 1 if not shown
+- total_cost = quantity * unit_cost if not explicit
+- Include every line item — do not skip any
+- Date format must be YYYY-MM-DD
+- All costs must be numbers (no currency symbols)"""
+
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
+        # Pass image/PDF as base64 inline
+        b64_data = base64.b64encode(content).decode("utf-8")
+        image_part = {"inline_data": {"mime_type": media_type, "data": b64_data}}
+
+        response = model.generate_content([prompt, image_part])
+        raw = response.text.strip()
+
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            if raw.endswith("```"):
+                raw = raw.rsplit("```", 1)[0]
+            raw = raw.strip()
+
+        parsed = json.loads(raw)
+
+        return {
+            "success": True,
+            "vendor": parsed.get("vendor"),
+            "date": parsed.get("date"),
+            "items": parsed.get("items", []),
+            "subtotal": parsed.get("subtotal"),
+            "tax": parsed.get("tax"),
+            "total": parsed.get("total"),
+            "notes": parsed.get("notes"),
+        }
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Receipt parse JSON error: {e} | raw: {raw[:200]}")
+        raise HTTPException(status_code=422, detail="Could not parse receipt data. Try a clearer photo.")
+    except Exception as e:
+        logger.error(f"Receipt parse error: {e}")
+        raise HTTPException(status_code=500, detail=f"Receipt parsing failed: {str(e)}")
+
+
+@api_router.post("/import/receipt/confirm")
+async def confirm_receipt_purchases(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_manager),
+):
+    """
+    Save confirmed receipt line items as Purchase records.
+    Expects: {vendor, date, items: [{name, quantity, unit, total_cost, purchase_type}]}
+    """
+    items  = data.get("items", [])
+    vendor = data.get("vendor", "Unknown Vendor")
+    date_str = data.get("date")
+
+    if not items:
+        raise HTTPException(status_code=400, detail="No items to save")
+
+    try:
+        purchase_date = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc) if date_str else datetime.now(timezone.utc)
+    except Exception:
+        purchase_date = datetime.now(timezone.utc)
+
+    saved = 0
+    for item in items:
+        name  = item.get("name", "Unknown Item").strip()
+        if not name:
+            continue
+        p = Purchase(
+            item_name=f"{name} ({vendor})" if vendor else name,
+            item_type=item.get("purchase_type", "other"),
+            purchase_type=item.get("purchase_type", "other"),
+            quantity=float(item.get("quantity") or 1),
+            total_cost=float(item.get("total_cost") or 0),
+            date=purchase_date,
+        )
+        db.add(p)
+        saved += 1
+
+    await db.commit()
+    return {"message": f"{saved} purchase{'s' if saved != 1 else ''} recorded from receipt", "saved": saved}
+
 # Health check
 @api_router.get("/")
 async def root():
