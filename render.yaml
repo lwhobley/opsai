@@ -31,7 +31,7 @@ services:
   - type: static_site
     name: opsai-frontend
     rootDir: frontend
-    buildCommand: npm ci --legacy-peer-deps && npm run build
+    buildCommand: npm ci && npm run build
     staticPublishPath: build
     pullRequestPreviewsEnabled: false
     routes:

@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_BACKEND_URL;
+// Vite uses import.meta.env; fallback for CRA compatibility
+const API_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_BACKEND_URL) || (typeof process !== "undefined" && process.env?.REACT_APP_BACKEND_URL) || "";
 
 const AuthContext = createContext(null);
 
