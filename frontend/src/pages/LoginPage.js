@@ -17,16 +17,11 @@ const LoginPage = () => {
     setPin(newPin);
     setError('');
 
-    // Auto-submit at 4 digits; for 6-digit PINs user taps the last digit
-    if (newPin.length === 4 || newPin.length === 6) {
+    // Auto-submit only at 6 digits
+    if (newPin.length === 6) {
       setLoading(true);
       const result = await login(newPin);
       if (!result.success) {
-        // If 4-digit attempt fails, allow continuing to 6 digits
-        if (newPin.length === 4) {
-          setLoading(false);
-          return; // don't clear — let them keep typing
-        }
         setError(result.error);
         setPin('');
       }
@@ -42,6 +37,17 @@ const LoginPage = () => {
   const handleClear = () => {
     setPin('');
     setError('');
+  };
+
+  const handleSubmit = async () => {
+    if (pin.length < 4 || loading) return;
+    setLoading(true);
+    const result = await login(pin);
+    if (!result.success) {
+      setError(result.error);
+      setPin('');
+    }
+    setLoading(false);
   };
 
   return (
@@ -109,17 +115,31 @@ const LoginPage = () => {
             {digit}
           </button>
         ))}
-        <button
-          onClick={handleClear}
-          disabled={loading}
-          className="h-20 w-20 rounded-full bg-[#1A1A2E] border border-[#2B2B4A] text-sm font-medium
-                     flex items-center justify-center text-[#8E8E9F]
-                     active:bg-[#D62828] active:text-white active:scale-95
-                     transition-all duration-150 disabled:opacity-50"
-          data-testid="pin-btn-clear"
-        >
-          Clear
-        </button>
+        {pin.length >= 4 && pin.length < 6 ? (
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="h-20 w-20 rounded-full bg-[#D4A017] border border-[#D4A017] text-sm font-bold
+                       flex items-center justify-center text-[#0A0A12]
+                       active:bg-[#B8860B] active:scale-95
+                       transition-all duration-150 disabled:opacity-50"
+            data-testid="pin-btn-submit"
+          >
+            Go
+          </button>
+        ) : (
+          <button
+            onClick={handleClear}
+            disabled={loading}
+            className="h-20 w-20 rounded-full bg-[#1A1A2E] border border-[#2B2B4A] text-sm font-medium
+                       flex items-center justify-center text-[#8E8E9F]
+                       active:bg-[#D62828] active:text-white active:scale-95
+                       transition-all duration-150 disabled:opacity-50"
+            data-testid="pin-btn-clear"
+          >
+            Clear
+          </button>
+        )}
         <button
           onClick={() => handlePinInput('0')}
           disabled={loading}
