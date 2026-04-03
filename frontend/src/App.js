@@ -313,7 +313,17 @@ const SplashScreen = ({ children }) => {
         playsInline
         onEnded={handleVideoEnd}
         onError={handleSkip}
-        className="w-full h-full object-cover"
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          minWidth: '100%',
+          minHeight: '100%',
+          width: 'auto',
+          height: 'auto',
+          objectFit: 'cover',
+        }}
       />
       <button
         onClick={(e) => { e.stopPropagation(); handleSkip(); }}
