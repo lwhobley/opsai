@@ -277,11 +277,60 @@ const AppRouter = () => {
   );
 };
 
+// Splash Screen — plays intro video once, then reveals the app
+const SplashScreen = ({ children }) => {
+  const [showSplash, setShowSplash] = React.useState(() => {
+    return !sessionStorage.getItem('ops_ai_splash_seen');
+  });
+  const [fadeOut, setFadeOut] = React.useState(false);
+  const videoRef = React.useRef(null);
+
+  const handleVideoEnd = () => {
+    setFadeOut(true);
+    setTimeout(() => {
+      sessionStorage.setItem('ops_ai_splash_seen', '1');
+      setShowSplash(false);
+    }, 800);
+  };
+
+  const handleSkip = () => {
+    if (videoRef.current) videoRef.current.pause();
+    handleVideoEnd();
+  };
+
+  if (!showSplash) return children;
+
+  return (
+    <div
+      className={`fixed inset-0 z-[9999] bg-black flex items-center justify-center transition-opacity duration-700 ${fadeOut ? 'opacity-0' : 'opacity-100'}`}
+      onClick={handleSkip}
+    >
+      <video
+        ref={videoRef}
+        src="/splash.mp4"
+        autoPlay
+        muted
+        playsInline
+        onEnded={handleVideoEnd}
+        onError={handleSkip}
+        className="w-full h-full object-cover"
+      />
+      <button
+        onClick={(e) => { e.stopPropagation(); handleSkip(); }}
+        className="absolute bottom-8 right-6 text-xs text-white/40 hover:text-white/70 transition-colors"
+      >
+        Skip
+      </button>
+    </div>
+  );
+};
+
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRouter />
+    <SplashScreen>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppRouter />
         <Toaster 
           position="top-center" 
           toastOptions={{
@@ -294,6 +343,7 @@ function App() {
         />
       </AuthProvider>
     </BrowserRouter>
+    </SplashScreen>
   );
 }
 
