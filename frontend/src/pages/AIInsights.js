@@ -1,8 +1,100 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Sparkle, Lightning, Warning, TrendUp, CircleNotch, ArrowClockwise } from '@phosphor-icons/react';
+import {
+  Sparkle, Lightning, Warning, TrendUp,
+  CircleNotch, ArrowClockwise, CheckCircle
+} from '@phosphor-icons/react';
 import { toast } from 'sonner';
 
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+const InsightsSkeleton = () => (
+  <div className="space-y-4 fade-in">
+    <div className="card-surface p-5 space-y-3">
+      <div className="skeleton h-4 w-3/4 rounded" />
+      <div className="skeleton h-3 w-full rounded" />
+      <div className="skeleton h-3 w-5/6 rounded" />
+    </div>
+    {[1,2,3].map(i => (
+      <div key={i} className="card-surface p-5 space-y-2.5">
+        <div className="flex justify-between">
+          <div className="skeleton h-3.5 w-40 rounded" />
+          <div className="skeleton h-5 w-12 rounded-md" />
+        </div>
+        <div className="skeleton h-3 w-full rounded" />
+        <div className="skeleton h-3 w-4/5 rounded" />
+      </div>
+    ))}
+  </div>
+);
+
+// ── Period Selector ───────────────────────────────────────────────────────────
+const PeriodSelector = ({ value, onChange }) => (
+  <div className="segmented-control w-44">
+    {[7, 14, 30].map(d => (
+      <button
+        key={d}
+        onClick={() => onChange(d)}
+        className={value === d ? 'active' : ''}
+        style={value === d ? { background: '#D4A017' } : {}}
+        data-testid={`period-${d}`}
+      >
+        {d}d
+      </button>
+    ))}
+  </div>
+);
+
+// ── Priority Badge ────────────────────────────────────────────────────────────
+const PriorityBadge = ({ priority }) => {
+  const styles = {
+    high:   'bg-[#D62828]/15 text-[#D62828]',
+    medium: 'bg-[#D4A017]/15 text-[#D4A017]',
+    low:    'bg-white/5 text-white/30',
+  };
+  return (
+    <span className={`text-2xs px-2 py-1 rounded-md font-semibold uppercase tracking-wider ${styles[priority] || styles.low}`}>
+      {priority}
+    </span>
+  );
+};
+
+// ── Bullet List ───────────────────────────────────────────────────────────────
+const BulletList = ({ items, color }) => (
+  <ul className="space-y-2">
+    {items?.map((item, i) => (
+      <li key={i} className="flex items-start gap-2.5 text-sm text-white/65 leading-relaxed">
+        <span className="mt-1.5 w-1 h-1 rounded-full shrink-0" style={{ background: color }} />
+        {item}
+      </li>
+    ))}
+  </ul>
+);
+
+// ── Context Grid ──────────────────────────────────────────────────────────────
+const ContextGrid = ({ context }) => {
+  if (!context) return null;
+  const items = [
+    { label: 'Total Sales', value: `$${(context.sales?.total || 0).toLocaleString()}` },
+    { label: 'Pour Cost',   value: `${context.costs?.pour_cost_pct || 0}%` },
+    { label: 'Food Cost',   value: `${context.costs?.food_cost_pct || 0}%` },
+    { label: 'Total COGS',  value: `${context.costs?.total_cogs_pct || 0}%` },
+  ];
+  return (
+    <div className="card-inset rounded-xl p-4 mt-5">
+      <p className="text-section-label mb-3">Analysis Context</p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+        {items.map(({ label, value }) => (
+          <div key={label}>
+            <p className="text-[11px] text-white/25 mb-0.5">{label}</p>
+            <p className="text-sm text-white/75 font-medium">{value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ── AI Insights ───────────────────────────────────────────────────────────────
 const AIInsights = () => {
   const { api } = useAuth();
   const [insights, setInsights] = useState(null);
@@ -14,14 +106,13 @@ const AIInsights = () => {
     setLoading(true);
     try {
       const response = await api.post('/ai/insights', {
-        include_bar: true,
+        include_bar:     true,
         include_kitchen: true,
         date_range_days: period,
       });
       setInsights(response.data.insights);
       setContext(response.data.context);
-    } catch (error) {
-      // (error logged server-side)
+    } catch {
       toast.error('Failed to generate insights');
     } finally {
       setLoading(false);
@@ -30,154 +121,108 @@ const AIInsights = () => {
 
   return (
     <div className="pb-24 fade-in" data-testid="ai-insights">
-      <div className="mb-6">
-        <h1 className="text-2xl font-light tracking-tight text-[#F5F5F0] flex items-center gap-2">
-          <Sparkle className="w-6 h-6 text-[#D4A017]" weight="fill" />
-          AI Insights
-        </h1>
-        <p className="text-sm text-[#8E8E9F]">Powered by Gemini AI</p>
-      </div>
 
-      {/* Period Selector */}
-      <div className="flex gap-2 mb-6">
-        {[7, 14, 30].map((d) => (
-          <button
-            key={d}
-            onClick={() => setPeriod(d)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              period === d 
-                ? 'bg-[#D4A017] text-[#0A0A12]' 
-                : 'bg-[#1A1A2E] text-[#8E8E9F] border border-[#2B2B4A]'
-            }`}
-            data-testid={`period-${d}`}
-          >
-            {d} Days
-          </button>
-        ))}
+      {/* Header */}
+      <div className="flex items-end justify-between mb-5">
+        <div>
+          <h1 className="text-page-title flex items-center gap-2">
+            <Sparkle className="w-5 h-5 text-[#D4A017]" weight="fill" />
+            AI Insights
+          </h1>
+          <p className="text-[12px] text-white/30 mt-0.5">Powered by Gemini</p>
+        </div>
+        <PeriodSelector value={period} onChange={setPeriod} />
       </div>
 
       {/* Generate Button */}
       <button
         onClick={fetchInsights}
         disabled={loading}
-        className="w-full py-4 bg-gradient-to-r from-[#D4A017] to-[#E5B83A] text-[#0A0A12] 
-                   rounded-xl font-medium mb-6 flex items-center justify-center gap-2
-                   active:opacity-90 disabled:opacity-50"
+        className="w-full h-12 bg-[#D4A017] text-[#0A0A12] rounded-xl font-semibold text-sm
+                   mb-5 flex items-center justify-center gap-2 active:opacity-90
+                   disabled:opacity-50 transition-opacity tracking-wide"
         data-testid="generate-insights-btn"
       >
         {loading ? (
-          <>
-            <CircleNotch className="w-5 h-5 animate-spin" />
-            Analyzing Data...
-          </>
+          <><CircleNotch className="w-4 h-4 animate-spin" />Analyzing…</>
         ) : (
-          <>
-            <Sparkle className="w-5 h-5" weight="fill" />
-            Generate AI Insights
-          </>
+          <><Sparkle className="w-4 h-4" weight="fill" />Generate Insights</>
         )}
       </button>
 
-      {/* Insights Display */}
-      {insights && (
+      {/* Loading skeleton */}
+      {loading && <InsightsSkeleton />}
+
+      {/* Results */}
+      {insights && !loading && (
         <div className="space-y-4 fade-in">
-          {/* Summary */}
-          <div className="glass rounded-xl p-5">
-            <p className="text-[#F5F5F0] text-lg leading-relaxed">{insights.summary}</p>
+
+          {/* Headline summary */}
+          <div className="card-surface p-5 border-l-2 border-[#D4A017]">
+            <div className="flex items-center gap-2 mb-2">
+              <Lightning className="w-4 h-4 text-[#D4A017]" weight="fill" />
+              <p className="text-section-label" style={{ color: '#D4A017' }}>Summary</p>
+            </div>
+            <p className="text-[15px] text-white/80 leading-relaxed font-light">
+              {insights.summary}
+            </p>
           </div>
 
           {/* Key Issues */}
-          <div className="bg-[#D62828]/10 border border-[#D62828]/30 rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-[#D62828] mb-3 flex items-center gap-2">
-              <Warning className="w-4 h-4" weight="fill" />
-              Key Issues
-            </h3>
-            <ul className="space-y-2">
-              {insights.key_issues?.map((issue, i) => (
-                <li key={i} className="text-sm text-[#F5F5F0] flex items-start gap-2">
-                  <span className="text-[#D62828] mt-1">•</span>
-                  {issue}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Likely Causes */}
-          <div className="bg-[#D4A017]/10 border border-[#D4A017]/30 rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-[#D4A017] mb-3 flex items-center gap-2">
-              <Lightning className="w-4 h-4" weight="fill" />
-              Likely Causes
-            </h3>
-            <ul className="space-y-2">
-              {insights.likely_causes?.map((cause, i) => (
-                <li key={i} className="text-sm text-[#F5F5F0] flex items-start gap-2">
-                  <span className="text-[#D4A017] mt-1">•</span>
-                  {cause}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Recommendations */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-[#10B981] flex items-center gap-2">
-              <TrendUp className="w-4 h-4" />
-              Recommendations
-            </h3>
-            {insights.recommendations?.map((rec, i) => (
-              <div 
-                key={i} 
-                className="glass rounded-xl p-5"
-                data-testid={`recommendation-${i}`}
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <h4 className="text-[#F5F5F0] font-medium">{rec.title}</h4>
-                  <span className={`px-2 py-0.5 rounded text-xs uppercase ${
-                    rec.priority === 'high' ? 'bg-[#D62828] text-white' :
-                    rec.priority === 'medium' ? 'bg-[#D4A017] text-black' :
-                    'bg-[#2B2B4A] text-[#8E8E9F]'
-                  }`}>
-                    {rec.priority}
-                  </span>
-                </div>
-                <p className="text-sm text-[#8E8E9F]">{rec.description}</p>
+          {insights.key_issues?.length > 0 && (
+            <div className="card-surface p-5 border-l-2 border-[#D62828]">
+              <div className="flex items-center gap-2 mb-3">
+                <Warning className="w-4 h-4 text-[#D62828]" weight="fill" />
+                <p className="text-section-label" style={{ color: '#D62828' }}>Key Issues</p>
               </div>
-            ))}
-          </div>
-
-          {/* Context Data */}
-          {context && (
-            <div className="mt-6 p-4 bg-[#1A1A2E] border border-white/5 rounded-xl">
-              <h4 className="text-xs uppercase tracking-wider text-[#5A5A70] font-semibold mb-3">
-                Analysis Context
-              </h4>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <span className="text-[#5A5A70]">Total Sales:</span>
-                  <span className="text-[#F5F5F0] ml-2">${context.sales?.total?.toLocaleString()}</span>
-                </div>
-                <div>
-                  <span className="text-[#5A5A70]">Pour Cost:</span>
-                  <span className="text-[#F5F5F0] ml-2">{context.costs?.pour_cost_pct}%</span>
-                </div>
-                <div>
-                  <span className="text-[#5A5A70]">Food Cost:</span>
-                  <span className="text-[#F5F5F0] ml-2">{context.costs?.food_cost_pct}%</span>
-                </div>
-                <div>
-                  <span className="text-[#5A5A70]">Total COGS:</span>
-                  <span className="text-[#F5F5F0] ml-2">{context.costs?.total_cogs_pct}%</span>
-                </div>
-              </div>
+              <BulletList items={insights.key_issues} color="#D62828" />
             </div>
           )}
 
-          {/* Refresh Button */}
+          {/* Likely Causes */}
+          {insights.likely_causes?.length > 0 && (
+            <div className="card-surface p-5 border-l-2 border-[#F59E0B]">
+              <div className="flex items-center gap-2 mb-3">
+                <Lightning className="w-4 h-4 text-[#F59E0B]" weight="fill" />
+                <p className="text-section-label" style={{ color: '#F59E0B' }}>Likely Causes</p>
+              </div>
+              <BulletList items={insights.likely_causes} color="#F59E0B" />
+            </div>
+          )}
+
+          {/* Recommendations */}
+          {insights.recommendations?.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-section-label flex items-center gap-2">
+                <TrendUp className="w-3.5 h-3.5 text-[#10B981]" />
+                <span style={{ color: '#10B981' }}>Recommendations</span>
+              </p>
+              {insights.recommendations.map((rec, i) => (
+                <div
+                  key={i}
+                  className="card-surface p-5 fade-in-up"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                  data-testid={`recommendation-${i}`}
+                >
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <h4 className="text-[14px] text-white/85 font-medium leading-snug">{rec.title}</h4>
+                    <PriorityBadge priority={rec.priority} />
+                  </div>
+                  <p className="text-[13px] text-white/45 leading-relaxed">{rec.description}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Context data */}
+          <ContextGrid context={context} />
+
+          {/* Refresh */}
           <button
             onClick={fetchInsights}
             disabled={loading}
-            className="w-full py-3 bg-[#1A1A2E] border border-white/5 text-[#8E8E9F] 
-                       rounded-xl flex items-center justify-center gap-2 active:bg-[#252540]"
+            className="w-full h-11 card-surface text-white/40 text-sm rounded-xl
+                       flex items-center justify-center gap-2 active:bg-white/[0.03] transition-colors"
           >
             <ArrowClockwise className="w-4 h-4" />
             Refresh Analysis
@@ -187,12 +232,12 @@ const AIInsights = () => {
 
       {/* Empty State */}
       {!insights && !loading && (
-        <div className="text-center py-12">
-          <Sparkle className="w-16 h-16 text-[#2B2B4A] mx-auto mb-4" />
-          <p className="text-[#5A5A70]">
-            Click the button above to generate AI-powered insights
-            <br />
-            based on your inventory and sales data
+        <div className="flex flex-col items-center justify-center py-16 text-center fade-in">
+          <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center mb-4">
+            <Sparkle className="w-8 h-8 text-white/10" />
+          </div>
+          <p className="text-sm text-white/25 leading-relaxed max-w-[220px]">
+            Generate AI-powered insights from your inventory and sales data
           </p>
         </div>
       )}

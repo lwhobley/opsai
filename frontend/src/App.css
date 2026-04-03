@@ -1,80 +1,8 @@
-/* Ops AI - Global Styles */
+/* App.css — global overrides not covered by Tailwind or index.css */
 
 .App {
   min-height: 100vh;
   min-height: 100dvh;
-}
-
-/* Animations */
-.fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-@keyframes fadeIn {
-  from { 
-    opacity: 0; 
-    transform: translateY(10px); 
-  }
-  to { 
-    opacity: 1; 
-    transform: translateY(0); 
-  }
-}
-
-/* Level indicator colors */
-.level-full { background-color: #10B981; }
-.level-75 { background-color: #34D399; }
-.level-50 { background-color: #D4A017; }
-.level-25 { background-color: #F59E0B; }
-.level-empty { background-color: #D62828; }
-
-/* Glass morphism effect */
-.glass {
-  background: rgba(26, 26, 46, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-/* Gold gradient text */
-.gold-text {
-  background: linear-gradient(135deg, #D4A017 0%, #E5B83A 50%, #B8860B 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* PWA safe areas */
-.safe-area-top {
-  padding-top: env(safe-area-inset-top, 0px);
-}
-
-.safe-area-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 20px);
-}
-
-/* Tap highlight removal for mobile */
-button, a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: #1A1A2E;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #2B2B4A;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #4A4A7A;
 }
 
 /* Hide scrollbar for horizontal overflow areas */
@@ -82,30 +10,10 @@ button, a {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-
-.hide-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-
-/* Touch target minimum size */
-.touch-target {
-  min-height: 44px;
-  min-width: 44px;
-}
-
-/* Number input styling */
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-input[type="number"] {
-  -moz-appearance: textfield;
-}
+.hide-scrollbar::-webkit-scrollbar { display: none; }
 
 /* ═══════════════════════════════════════════════════════
-   LOGIN SCREEN — Premium Hospitality POS
+   LOGIN SCREEN
    ═══════════════════════════════════════════════════════ */
 
 .login-screen {
@@ -122,12 +30,9 @@ input[type="number"] {
 .login-screen::before {
   content: '';
   position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: radial-gradient(ellipse at 30% 20%, rgba(180, 140, 50, 0.03) 0%, transparent 50%),
-              radial-gradient(ellipse at 70% 80%, rgba(180, 140, 50, 0.02) 0%, transparent 50%);
+  inset: 0;
+  background: radial-gradient(ellipse at 30% 20%, rgba(180, 140, 50, 0.035) 0%, transparent 55%),
+              radial-gradient(ellipse at 70% 80%, rgba(180, 140, 50, 0.02) 0%, transparent 55%);
   pointer-events: none;
 }
 
@@ -142,73 +47,61 @@ input[type="number"] {
   z-index: 1;
 }
 
-.login-logo-wrap {
-  margin-bottom: 12px;
-}
-
-.login-logo {
-  width: 140px;
-  height: auto;
-  opacity: 0.95;
-}
+.login-logo-wrap { margin-bottom: 14px; }
+.login-logo { width: 140px; height: auto; opacity: 0.92; }
 
 .login-subtitle {
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.28);
-  margin-bottom: 32px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.22);
+  margin-bottom: 36px;
   font-weight: 400;
 }
 
 /* PIN dots */
 .login-pin-dots {
   display: flex;
-  gap: 16px;
-  margin-bottom: 28px;
-  height: 14px;
+  gap: 18px;
+  margin-bottom: 32px;
 }
 
 .login-dot {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.18s ease;
 }
 
-.login-dot.active {
-  border-color: rgba(200, 165, 60, 0.6);
-}
+.login-dot.active { border-color: rgba(212, 160, 23, 0.5); }
 
 .login-dot-fill {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #C8A53C, #A68520);
+  background: linear-gradient(135deg, #D4A017, #A68520);
   animation: dotIn 0.15s ease-out;
 }
 
 @keyframes dotIn {
   from { transform: scale(0); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  to   { transform: scale(1); opacity: 1; }
 }
 
-.login-shake {
-  animation: shakeX 0.4s ease-in-out;
-}
+.login-shake { animation: shakeX 0.38s ease-in-out; }
 
 @keyframes shakeX {
   0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-8px); }
-  40% { transform: translateX(8px); }
-  60% { transform: translateX(-6px); }
-  80% { transform: translateX(6px); }
+  20%      { transform: translateX(-7px); }
+  40%      { transform: translateX(7px); }
+  60%      { transform: translateX(-5px); }
+  80%      { transform: translateX(5px); }
 }
 
-/* Error */
+/* Error / Loading */
 .login-error {
   font-size: 12px;
   color: #C0392B;
@@ -216,68 +109,60 @@ input[type="number"] {
   letter-spacing: 0.02em;
 }
 
-/* Loading */
 .login-loading {
   margin-bottom: 16px;
-  color: rgba(200, 165, 60, 0.7);
+  color: rgba(212, 160, 23, 0.6);
 }
 
-.login-spinner {
-  animation: spin 0.8s linear infinite;
-}
+.login-spinner { animation: spin 0.8s linear infinite; }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Keypad */
 .login-keypad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  gap: 10px;
   width: 100%;
   max-width: 264px;
 }
 
 .login-key {
-  height: 64px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 22px;
+  height: 68px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.025);
+  color: rgba(255, 255, 255, 0.8);
+  font-family: 'Outfit', sans-serif;
+  font-size: 24px;
   font-weight: 300;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: all 0.1s ease;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
 
 .login-key:active {
-  background: rgba(200, 165, 60, 0.15);
-  border-color: rgba(200, 165, 60, 0.25);
-  transform: scale(0.96);
+  background: rgba(212, 160, 23, 0.12);
+  border-color: rgba(212, 160, 23, 0.22);
+  transform: scale(0.95);
 }
 
 .login-key:disabled {
-  opacity: 0.3;
+  opacity: 0.25;
   pointer-events: none;
 }
 
-.login-key-back {
-  color: rgba(255, 255, 255, 0.35);
-}
+.login-key-back { color: rgba(255, 255, 255, 0.3); }
 
 .login-key-back:active {
-  color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
-.login-key-empty {
-  visibility: hidden;
-}
+.login-key-empty { visibility: hidden; }
