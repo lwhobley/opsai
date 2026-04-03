@@ -12,6 +12,7 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState(7);
   const [targets, setTargets] = useState({ pour_cost_target: 20.0, food_cost_target: 30.0 });
+  const [chartData, setChartData] = React.useState([]);
 
   React.useEffect(() => {
     api.get('/settings/targets').then(r => setTargets(r.data)).catch(() => {});
@@ -19,6 +20,20 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchDashboard();
+  }, [period]);
+
+  React.useEffect(() => {
+    api.get(`/reports/sales?days=${period}`)
+      .then(r => {
+        const rows = (r.data.rows || []).slice(-7);
+        setChartData(rows.map(row => ({
+          name: new Date(row.date).toLocaleDateString('en-US', { weekday: 'short' }),
+          sales: row.total,
+          bar: row.bar,
+          food: row.food,
+        })));
+      })
+      .catch(() => setChartData([]));
   }, [period]);
 
   const fetchDashboard = async () => {
@@ -39,22 +54,6 @@ const Dashboard = () => {
       </div>
     );
   }
-
-  // Build chart data from real sales API data
-  const [chartData, setChartData] = React.useState([]);
-  React.useEffect(() => {
-    api.get(`/reports/sales?days=${period}`)
-      .then(r => {
-        const rows = (r.data.rows || []).slice(-7);
-        setChartData(rows.map(row => ({
-          name: new Date(row.date).toLocaleDateString('en-US', { weekday: 'short' }),
-          sales: row.total,
-          bar: row.bar,
-          food: row.food,
-        })));
-      })
-      .catch(() => setChartData([]));
-  }, [period]);
 
   return (
     <div className="pb-24 fade-in" data-testid="dashboard">
