@@ -447,8 +447,8 @@ const KitchenInventory = () => {
               item={item}
               quantity={counts[item.id]}
               onChange={v => handleChange(item.id, v)}
-              onIncrement={() => handleIncrement(item.id)}
-              onDecrement={() => handleDecrement(item.id)}
+              onIncrement={(amt = 1) => handleIncrement(item.id, amt)}
+              onDecrement={(amt = 1) => handleDecrement(item.id, amt)}
               onSave={() => handleSaveCount(item.id)}
             />
           ))}
