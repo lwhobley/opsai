@@ -11,14 +11,13 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
 
   const handlePinInput = async (digit) => {
-    if (pin.length >= 6) return;
+    if (pin.length >= 4) return;
 
     const newPin = pin + digit;
     setPin(newPin);
     setError('');
 
-    // Auto-submit only at 6 digits
-    if (newPin.length === 6) {
+    if (newPin.length === 4) {
       setLoading(true);
       const result = await login(newPin);
       if (!result.success) {
@@ -37,17 +36,6 @@ const LoginPage = () => {
   const handleClear = () => {
     setPin('');
     setError('');
-  };
-
-  const handleSubmit = async () => {
-    if (pin.length < 4 || loading) return;
-    setLoading(true);
-    const result = await login(pin);
-    if (!result.success) {
-      setError(result.error);
-      setPin('');
-    }
-    setLoading(false);
   };
 
   return (
@@ -69,7 +57,7 @@ const LoginPage = () => {
 
       {/* PIN Display */}
       <div className="mb-8 flex gap-3" data-testid="pin-display">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+        {[0, 1, 2, 3].map((i) => (
           <div
             key={i}
             className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
@@ -115,31 +103,17 @@ const LoginPage = () => {
             {digit}
           </button>
         ))}
-        {pin.length >= 4 && pin.length < 6 ? (
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="h-20 w-20 rounded-full bg-[#D4A017] border border-[#D4A017] text-sm font-bold
-                       flex items-center justify-center text-[#0A0A12]
-                       active:bg-[#B8860B] active:scale-95
-                       transition-all duration-150 disabled:opacity-50"
-            data-testid="pin-btn-submit"
-          >
-            Go
-          </button>
-        ) : (
-          <button
-            onClick={handleClear}
-            disabled={loading}
-            className="h-20 w-20 rounded-full bg-[#1A1A2E] border border-[#2B2B4A] text-sm font-medium
-                       flex items-center justify-center text-[#8E8E9F]
-                       active:bg-[#D62828] active:text-white active:scale-95
-                       transition-all duration-150 disabled:opacity-50"
-            data-testid="pin-btn-clear"
-          >
-            Clear
-          </button>
-        )}
+        <button
+          onClick={handleClear}
+          disabled={loading}
+          className="h-20 w-20 rounded-full bg-[#1A1A2E] border border-[#2B2B4A] text-sm font-medium
+                     flex items-center justify-center text-[#8E8E9F]
+                     active:bg-[#D62828] active:text-white active:scale-95
+                     transition-all duration-150 disabled:opacity-50"
+          data-testid="pin-btn-clear"
+        >
+          Clear
+        </button>
         <button
           onClick={() => handlePinInput('0')}
           disabled={loading}
