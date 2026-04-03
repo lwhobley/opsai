@@ -90,19 +90,19 @@ const AppLayout = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A12]">
+    <div className="min-h-screen bg-[#060609]">
       {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur-xl bg-[#0A0A12]/80 border-b border-white/5 safe-area-top">
-        <div className="flex items-center justify-between p-4">
-          <img src={LOGO_URL} alt="Ops AI" className="h-8" data-testid="app-logo" />
+      <header className="sticky top-0 z-50 backdrop-blur-xl bg-[#060609]/90 border-b border-white/[0.04] safe-area-top">
+        <div className="flex items-center justify-between px-5 py-3">
+          <img src={LOGO_URL} alt="Ops AI" className="h-7 opacity-90" data-testid="app-logo" />
           <div className="flex items-center gap-3">
-            <span className="text-sm text-[#8E8E9F]">{user?.name}</span>
+            <span className="text-xs tracking-wide text-white/25 font-light">{user?.name}</span>
             <button
               onClick={handleLogout}
-              className="p-2 rounded-lg text-[#8E8E9F] hover:text-[#D62828] transition-colors"
+              className="p-2 rounded-lg text-white/20 hover:text-red-400/70 transition-colors"
               data-testid="logout-btn"
             >
-              <SignOut className="w-5 h-5" />
+              <SignOut className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -114,8 +114,8 @@ const AppLayout = ({ children }) => {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#0A0A12]/95 backdrop-blur-xl border-t border-white/5 safe-area-bottom z-50">
-        <div className="flex items-center justify-around py-2">
+      <nav className="fixed bottom-0 left-0 right-0 bg-[#060609]/95 backdrop-blur-xl border-t border-white/[0.04] safe-area-bottom z-50">
+        <div className="flex items-center justify-around py-1.5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
@@ -123,13 +123,13 @@ const AppLayout = ({ children }) => {
               <button
                 key={item.path}
                 onClick={() => navigate(item.path)}
-                className={`flex flex-col items-center gap-1 p-2 min-w-[64px] transition-colors ${
-                  isActive ? 'text-[#D4A017]' : 'text-[#5A5A70]'
+                className={`flex flex-col items-center gap-0.5 p-2 min-w-[56px] transition-all duration-200 ${
+                  isActive ? 'text-[#C8A53C]' : 'text-white/20'
                 }`}
                 data-testid={`nav-${item.label.toLowerCase()}`}
               >
-                <Icon className="w-6 h-6" weight={isActive ? 'fill' : 'regular'} />
-                <span className="text-xs">{item.label}</span>
+                <Icon className="w-5 h-5" weight={isActive ? 'fill' : 'regular'} />
+                <span className="text-[10px] tracking-wide">{item.label}</span>
               </button>
             );
           })}
@@ -138,8 +138,8 @@ const AppLayout = ({ children }) => {
           <div className="relative">
             <button
               onClick={() => setShowMore(!showMore)}
-              className={`flex flex-col items-center gap-1 p-2 min-w-[64px] transition-colors ${
-                showMore ? 'text-[#D4A017]' : 'text-[#5A5A70]'
+              className={`flex flex-col items-center gap-0.5 p-2 min-w-[56px] transition-all duration-200 ${
+                showMore ? 'text-[#C8A53C]' : 'text-white/20'
               }`}
               data-testid="nav-more"
             >
@@ -153,7 +153,7 @@ const AppLayout = ({ children }) => {
                   className="fixed inset-0" 
                   onClick={() => setShowMore(false)}
                 />
-                <div className="absolute bottom-full right-0 mb-2 w-48 bg-[#1A1A2E] border border-[#2B2B4A] rounded-xl overflow-hidden shadow-xl">
+                <div className="absolute bottom-full right-0 mb-2 w-48 bg-[#0E0E18] border border-white/[0.06] rounded-xl overflow-hidden shadow-2xl">
                   {moreItems.map((item) => {
                     const Icon = item.icon;
                     return (
@@ -163,11 +163,11 @@ const AppLayout = ({ children }) => {
                           navigate(item.path);
                           setShowMore(false);
                         }}
-                        className="w-full flex items-center gap-3 p-4 text-left text-[#F5F5F0] hover:bg-[#252540] transition-colors"
+                        className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-white/70 hover:bg-white/[0.03] transition-colors border-b border-white/[0.03] last:border-0"
                         data-testid={`more-${item.label.toLowerCase().replace(' ', '-')}`}
                       >
-                        <Icon className="w-5 h-5 text-[#D4A017]" />
-                        <span className="text-sm">{item.label}</span>
+                        <Icon className="w-4 h-4 text-[#C8A53C]/60" />
+                        <span className="text-[13px] font-light tracking-wide">{item.label}</span>
                       </button>
                     );
                   })}
