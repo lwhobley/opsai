@@ -50,7 +50,7 @@ const ProtectedRoute = ({ children }) => {
 const AppLayout = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { logout, user, isAdmin, isManager } = useAuth();
+  const { logout, user, isAdmin, isManager, api } = useAuth();
   const [showMore, setShowMore] = React.useState(false);
 
   // Sync offline counts whenever we come back online
