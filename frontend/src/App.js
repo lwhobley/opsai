@@ -279,16 +279,27 @@ const AppRouter = () => {
 
 // Splash Screen — plays intro video once, then reveals the app
 const SplashScreen = ({ children }) => {
-  const [showSplash, setShowSplash] = React.useState(() => {
-    return !sessionStorage.getItem('ops_ai_splash_seen');
-  });
+  const [showSplash, setShowSplash] = React.useState(true);
   const [fadeOut, setFadeOut] = React.useState(false);
   const videoRef = React.useRef(null);
+
+  React.useEffect(() => {
+    // Force play on mobile — some browsers need this
+    const video = videoRef.current;
+    if (video) {
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          // Autoplay blocked — skip to app
+          handleVideoEnd();
+        });
+      }
+    }
+  }, []);
 
   const handleVideoEnd = () => {
     setFadeOut(true);
     setTimeout(() => {
-      sessionStorage.setItem('ops_ai_splash_seen', '1');
       setShowSplash(false);
     }, 800);
   };
