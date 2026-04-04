@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { CircleNotch, Backspace } from '@phosphor-icons/react';
 
-const LOGO_URL = 'https://customer-assets.emergentagent.com/job_cost-control-ai/artifacts/usjulrm9_IMG_2004.png';
+const LOGO_URL = '/logo-full.png';
 
 const LoginPage = () => {
   const { login } = useAuth();

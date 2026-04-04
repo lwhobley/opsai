@@ -28,8 +28,9 @@ from models import (
     User, InventoryItem, InventoryCount, KitchenInventoryItem, 
     KitchenInventoryCount, Purchase, Sale, MenuItem, MenuItemIngredient,
     ToastIntegration,
-    WasteLog
+    WasteLog, PushSubscription
 )
+from pywebpush import webpush, WebPushException
 
 # ── Simple in-memory login rate limiter ──────────────────────────────────────
 from contextlib import asynccontextmanager
@@ -1016,6 +1017,112 @@ async def clear_all_data(body: ClearDataConfirm, db: AsyncSession = Depends(get_
     
     await db.commit()
     return {"message": "All data cleared successfully"}
+
+# ── Push Notifications ────────────────────────────────────────────────────────
+
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_CLAIMS = {"sub": "mailto:ops-ai@notifications.local"}
+
+class PushSubscriptionCreate(BaseModel):
+    endpoint: str
+    keys: dict  # {p256dh: str, auth: str}
+
+@api_router.post("/push/subscribe")
+async def push_subscribe(data: PushSubscriptionCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # Upsert by endpoint
+    result = await db.execute(select(PushSubscription).where(PushSubscription.endpoint == data.endpoint))
+    existing = result.scalar_one_or_none()
+    if existing:
+        existing.user_id = user.id
+        existing.p256dh = data.keys["p256dh"]
+        existing.auth = data.keys["auth"]
+    else:
+        sub = PushSubscription(
+            user_id=user.id,
+            endpoint=data.endpoint,
+            p256dh=data.keys["p256dh"],
+            auth=data.keys["auth"],
+        )
+        db.add(sub)
+    await db.commit()
+    return {"status": "subscribed"}
+
+@api_router.delete("/push/subscribe")
+async def push_unsubscribe(data: PushSubscriptionCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    result = await db.execute(select(PushSubscription).where(PushSubscription.endpoint == data.endpoint))
+    existing = result.scalar_one_or_none()
+    if existing:
+        await db.delete(existing)
+        await db.commit()
+    return {"status": "unsubscribed"}
+
+@api_router.get("/push/vapid-key")
+async def get_vapid_key():
+    return {"publicKey": VAPID_PUBLIC_KEY}
+
+class PushNotificationSend(BaseModel):
+    title: str
+    body: str
+    url: Optional[str] = "/"
+    user_ids: Optional[List[str]] = None  # None = broadcast to all
+
+@api_router.post("/push/send")
+async def send_push_notification(data: PushNotificationSend, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    query = select(PushSubscription)
+    if data.user_ids:
+        query = query.where(PushSubscription.user_id.in_(data.user_ids))
+    result = await db.execute(query)
+    subs = result.scalars().all()
+
+    payload = json.dumps({"title": data.title, "body": data.body, "url": data.url})
+    sent, failed = 0, 0
+    stale_ids = []
+
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info={"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims=VAPID_CLAIMS,
+            )
+            sent += 1
+        except WebPushException as e:
+            if e.response and e.response.status_code in (404, 410):
+                stale_ids.append(sub.id)
+            failed += 1
+        except Exception:
+            failed += 1
+
+    # Clean up stale subscriptions
+    if stale_ids:
+        for sid in stale_ids:
+            result = await db.execute(select(PushSubscription).where(PushSubscription.id == sid))
+            stale = result.scalar_one_or_none()
+            if stale:
+                await db.delete(stale)
+        await db.commit()
+
+    return {"sent": sent, "failed": failed, "cleaned": len(stale_ids)}
+
+# Helper to send push from other parts of the app
+async def _send_push_to_all(db: AsyncSession, title: str, body: str, url: str = "/"):
+    if not VAPID_PRIVATE_KEY:
+        return
+    result = await db.execute(select(PushSubscription))
+    subs = result.scalars().all()
+    payload = json.dumps({"title": title, "body": body, "url": url})
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info={"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims=VAPID_CLAIMS,
+            )
+        except Exception:
+            pass
 
 # Include router
 app.include_router(api_router)

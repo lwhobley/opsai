@@ -26,8 +26,9 @@ import SalesEntry from './pages/SalesEntry';
 
 import './App.css';
 import { syncOfflineCounts } from './utils/offlineStorage';
+import { subscribeToPush, isPushSupported } from './utils/pushNotifications';
 
-const LOGO_URL = 'https://customer-assets.emergentagent.com/job_cost-control-ai/artifacts/usjulrm9_IMG_2004.png';
+const LOGO_URL = '/logo-full.png';
 
 // ── Protected Route ───────────────────────────────────────────────────────────
 const ProtectedRoute = ({ children }) => {
@@ -64,6 +65,13 @@ const AppLayout = ({ children }) => {
 
   // Close sheet on route change
   React.useEffect(() => { setShowMore(false); }, [location.pathname]);
+
+  // Auto-subscribe to push notifications
+  React.useEffect(() => {
+    if (user && isPushSupported() && Notification.permission !== 'denied') {
+      subscribeToPush(api).catch(() => {});
+    }
+  }, [user, api]);
 
   const navItems = [
     { path: '/',        icon: House,      label: 'Home' },

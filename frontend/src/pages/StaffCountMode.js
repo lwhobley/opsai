@@ -19,7 +19,7 @@ import {
 import { saveOfflineCounts, cacheInventoryItems, getCachedInventoryItems } from '../utils/offlineStorage';
 import { toast } from 'sonner';
 
-const LOGO_URL = 'https://customer-assets.emergentagent.com/job_cost-control-ai/artifacts/usjulrm9_IMG_2004.png';
+const LOGO_URL = '/logo-full.png';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const BAR_LOCATIONS = ['Main Bar', 'Service Bar', 'Back Bar', 'Storage'];

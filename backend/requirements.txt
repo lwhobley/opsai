@@ -20,3 +20,4 @@ python-multipart==0.0.22
 sqlalchemy==2.0.48
 starlette==0.37.2
 uvicorn==0.25.0
+pywebpush==2.0.1

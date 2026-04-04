@@ -169,3 +169,14 @@ class WasteLog(Base):
     logged_by = Column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     date = Column(DateTime(timezone=True), default=utc_now, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
+
+class PushSubscription(Base):
+    """Web Push notification subscriptions."""
+    __tablename__ = 'push_subscriptions'
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False, unique=True)
+    p256dh = Column(Text, nullable=False)
+    auth = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
