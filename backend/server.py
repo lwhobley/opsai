@@ -62,11 +62,11 @@ _GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 # Ordered fallback list — try newest first, fall back if not available for this key
 _GEMINI_MODEL_FALLBACKS = [
-    "gemini-2.0-flash",
-    "gemini-2.5-flash-preview-04-17",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash-001",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
+    "gemini-flash-latest",
 ]
 
 def _get_gemini_client():
