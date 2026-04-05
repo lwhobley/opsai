@@ -2355,15 +2355,16 @@ async def debug_gemini_models():
                 results[model] = f"✗ error: {str(e)[:40]}"
     # Also list available models
     try:
-        list_r = await client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}")
-        if list_r.status_code == 200:
+        async with httpx.AsyncClient(timeout=10) as list_client:
+         list_r = await list_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}")
+         if list_r.status_code == 200:
             models_data = list_r.json()
             available = [
                 m['name'] for m in models_data.get('models', [])
                 if 'generateContent' in m.get('supportedGenerationMethods', [])
             ]
             results['__available_models__'] = available
-        else:
+         else:
             results['__list_error__'] = f"{list_r.status_code}: {list_r.text[:100]}"
     except Exception as e:
         results['__list_error__'] = str(e)[:60]
