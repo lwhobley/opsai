@@ -257,23 +257,28 @@ const UserManagement = () => {
     }
   };
 
-  if (!isAdmin) {
+  const { isManager } = useAuth();
+
+  if (!isAdmin && !isManager) {
     return (
       <div className="pb-24 fade-in text-center py-12" data-testid="user-management">
         <ShieldCheck className="w-16 h-16 text-[#2B2B4A] mx-auto mb-4" />
-        <p className="text-[#5A5A70]">Admin access required</p>
+        <p className="text-[#5A5A70]">Manager access required</p>
       </div>
     );
   }
 
   return (
     <div className="pb-24 fade-in" data-testid="user-management">
+      <h1 className="text-2xl font-light tracking-tight text-[#F5F5F0] flex items-center gap-2 mb-6">
+        <Users className="w-6 h-6 text-[#D4A017]" />
+        Team &amp; Alerts
+      </h1>
+
+      {isAdmin && (<>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-light tracking-tight text-[#F5F5F0] flex items-center gap-2">
-            <Users className="w-6 h-6 text-[#D4A017]" />
-            Users
-          </h1>
+          <h2 className="text-base font-medium text-[#F5F5F0]">Users</h2>
           <p className="text-sm text-[#8E8E9F]">{users.length} active</p>
         </div>
         <AddUserDialog api={api} onSuccess={fetchUsers} />
@@ -338,6 +343,8 @@ const UserManagement = () => {
           })}
         </div>
       )}
+
+      </>)}
 
       {/* ── Push Notification Settings ── */}
       <div className="mt-6 p-4 bg-[#1A1A2E] border border-white/5 rounded-xl">
