@@ -2265,12 +2265,16 @@ async def list_gemini_models():
     try:
         _client = genai_client.Client(api_key=_GEMINI_API_KEY)
         models = list(_client.models.list())
-        available = [
-            {"name": m.name, "methods": getattr(m, "supported_generation_methods", [])}
-            for m in models
-            if "generateContent" in (getattr(m, "supported_generation_methods", []) or [])
-        ]
-        return {"models": available[:20]}
+        # Return all models with all attributes for debugging
+        result = []
+        for m in models[:30]:
+            result.append({
+                "name": m.name,
+                "display_name": getattr(m, "display_name", ""),
+                "methods": getattr(m, "supported_generation_methods", []),
+                "attrs": [a for a in dir(m) if not a.startswith("_")][:10],
+            })
+        return {"total": len(models), "models": result}
     except Exception as e:
         return {"error": str(e)}
 
