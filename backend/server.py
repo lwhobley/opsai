@@ -20,7 +20,7 @@ import json
 import pandas as pd
 import pdfplumber
 from io import BytesIO
-import google.generativeai as genai
+from google import genai as genai_client
 import httpx
 
 from database import get_db, engine, Base, AsyncSessionLocal
@@ -58,7 +58,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Configure Gemini
-genai.configure(api_key=os.environ.get('GEMINI_API_KEY'))
+_GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 # JWT Config
 JWT_SECRET = os.environ.get('JWT_SECRET')
@@ -786,8 +786,11 @@ Respond in this exact JSON format:
 Be direct, operational, and profit-focused. Write like an experienced GM."""
 
     try:
-        model = genai.GenerativeModel(os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash'))
-        response = model.generate_content(prompt)
+        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
+        response = _client.models.generate_content(
+            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash'),
+            contents=prompt,
+        )
         response_text = response.text.strip()
         
         # Clean up response
@@ -980,13 +983,16 @@ Rules:
 - All costs must be numbers (no currency symbols)"""
 
     try:
-        model = genai.GenerativeModel(os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash"))
+        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
 
         # Pass image/PDF as base64 inline
         b64_data = base64.b64encode(content).decode("utf-8")
-        image_part = {"inline_data": {"mime_type": media_type, "data": b64_data}}
+        image_part = genai_client.types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=media_type)
 
-        response = model.generate_content([prompt, image_part])
+        response = _client.models.generate_content(
+            model=os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash"),
+            contents=[prompt, image_part],
+        )
         raw = response.text.strip()
 
         # Strip markdown fences if present
