@@ -788,7 +788,7 @@ Be direct, operational, and profit-focused. Write like an experienced GM."""
     try:
         _client = genai_client.Client(api_key=_GEMINI_API_KEY)
         response = _client.models.generate_content(
-            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash'),
+            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash-lite'),
             contents=prompt,
         )
         response_text = response.text.strip()
@@ -990,7 +990,7 @@ Rules:
         image_part = genai_client.types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=media_type)
 
         response = _client.models.generate_content(
-            model=os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash"),
+            model=os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash-lite"),
             contents=[prompt, image_part],
         )
         raw = response.text.strip()
@@ -1249,15 +1249,19 @@ async def send_push_notification(data: PushNotificationSend, db: AsyncSession = 
 
 @api_router.get("/ai/models")
 async def list_ai_models(user: User = Depends(require_admin)):
-    """List available Gemini models for debugging."""
+    """List available Gemini models for debugging — uses httpx to call REST directly."""
     try:
-        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
-        models = list(_client.models.list())
-        flash = [m.name for m in models
-                 if hasattr(m, 'supported_actions') and 'generateContent' in (m.supported_actions or [])
-                 or hasattr(m, 'supported_generation_methods') and 'generateContent' in (m.supported_generation_methods or [])]
-        all_names = [m.name for m in models]
-        return {"models": all_names[:30], "flash_models": flash[:10]}
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={_GEMINI_API_KEY}&pageSize=50"
+            )
+            if r.status_code != 200:
+                return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+            data = r.json()
+            models = data.get("models", [])
+            generate = [m["name"] for m in models
+                        if "generateContent" in m.get("supportedGenerationMethods", [])]
+            return {"total": len(models), "generate_models": generate}
     except Exception as e:
         return {"error": str(e)[:300]}
 
