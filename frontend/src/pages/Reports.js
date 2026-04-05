@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   ChartBar, WarningCircle, Scales, ArrowDown, ArrowUp,
   Trash, Plus, X, Wine, CookingPot, CheckCircle,
-  ArrowsClockwise, MinusCircle
+  ArrowsClockwise, MinusCircle, DownloadSimple
 } from '@phosphor-icons/react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
@@ -27,6 +27,64 @@ const PeriodSelector = ({ value, onChange }) => (
     </SelectContent>
   </Select>
 );
+
+// ── Export Menu ──────────────────────────────────────────────────────────────
+const ExportMenu = ({ reportKey, days, api }) => {
+  const [open, setOpen] = React.useState(false);
+  const [loading, setLoading] = React.useState(null);
+
+  const download = async (format) => {
+    setLoading(format);
+    setOpen(false);
+    try {
+      const res = await api.get('/reports/export', {
+        params: { report: reportKey, format, days },
+        responseType: 'blob',
+      });
+      const ext  = format === 'xlsx' ? 'xlsx' : 'pdf';
+      const mime = format === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/pdf';
+      const url  = URL.createObjectURL(new Blob([res.data], { type: mime }));
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `${reportKey}_${new Date().toISOString().slice(0,10)}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // silent — browser shows nothing if download fails
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        disabled={!!loading}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/10 text-[#8E8E9F] hover:text-[#F5F5F0] hover:border-[#D4A017]/40 hover:bg-[#D4A017]/5 transition-all text-sm disabled:opacity-50"
+      >
+        <DownloadSimple className="w-4 h-4" weight="bold" />
+        {loading ? `${loading.toUpperCase()}\u2026` : 'Export'}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-20 bg-[#1A1A2E] border border-white/10 rounded-xl shadow-xl overflow-hidden w-36">
+            <button onClick={() => download('xlsx')} className="w-full flex items-center gap-2 px-4 py-3 text-sm text-[#F5F5F0] hover:bg-[#D4A017]/10 hover:text-[#D4A017] transition-colors">
+              <DownloadSimple className="w-4 h-4" /> Excel (.xlsx)
+            </button>
+            <div className="border-t border-white/5" />
+            <button onClick={() => download('pdf')} className="w-full flex items-center gap-2 px-4 py-3 text-sm text-[#F5F5F0] hover:bg-[#D4A017]/10 hover:text-[#D4A017] transition-colors">
+              <DownloadSimple className="w-4 h-4" /> PDF
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 const KpiCard = ({ label, value, sub, color = 'text-white/75' }) => (
   <div className="card-inset rounded-xl p-3.5 flex-1 min-w-0">
@@ -188,6 +246,10 @@ const LowStockPanel = ({ api }) => {
   const { items, summary } = data;
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-white/30 uppercase tracking-wider">Low Stock</span>
+        <ExportMenu reportKey="low-stock" days={30} api={api} />
+      </div>
       <div className="flex gap-2">
         <KpiCard label="Total Low" value={summary.total_low} color="text-[#F59E0B]" />
         <KpiCard label="Critical" value={summary.critical} color="text-[#D62828]" />
@@ -248,6 +310,10 @@ const VariancePanel = ({ api }) => {
   const { items, summary } = data;
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-white/30 uppercase tracking-wider">Variance</span>
+        <ExportMenu reportKey="variance" days={30} api={api} />
+      </div>
       <div className="flex gap-2">
         <KpiCard label="Items Tracked" value={summary.total_items} />
         <KpiCard label="Shrinkage" value={summary.shrinkage_items} color="text-[#D62828]" />
@@ -314,7 +380,10 @@ const WastePanel = ({ api }) => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <PeriodSelector value={days} onChange={setDays} />
-        <LogWasteDialog api={api} onSuccess={load} />
+        <div className="flex items-center gap-2">
+          <ExportMenu reportKey="waste" days={days} api={api} />
+          <LogWasteDialog api={api} onSuccess={load} />
+        </div>
       </div>
       {loading ? <Spinner /> : !data ? <EmptyState label="No data" /> : (
         <>
@@ -381,7 +450,10 @@ const SalesPanel = ({ api }) => {
 
   return (
     <div className="space-y-4">
-      <PeriodSelector value={days} onChange={setDays} />
+      <div className="flex items-center justify-between">
+        <PeriodSelector value={days} onChange={setDays} />
+        <ExportMenu reportKey="sales" days={days} api={api} />
+      </div>
       {loading ? <Spinner /> : !data ? <EmptyState label="No data" /> : (
         <>
           <div className="flex gap-2">
@@ -427,7 +499,10 @@ const PourCostPanel = ({ api }) => {
 
   return (
     <div className="space-y-4">
-      <PeriodSelector value={days} onChange={setDays} />
+      <div className="flex items-center justify-between">
+        <PeriodSelector value={days} onChange={setDays} />
+        <ExportMenu reportKey="pour-cost" days={days} api={api} />
+      </div>
       {loading ? <Spinner /> : !data ? <EmptyState label="No data" /> : (
         <>
           <div className="flex gap-2">
@@ -477,7 +552,10 @@ const FoodCostPanel = ({ api }) => {
 
   return (
     <div className="space-y-4">
-      <PeriodSelector value={days} onChange={setDays} />
+      <div className="flex items-center justify-between">
+        <PeriodSelector value={days} onChange={setDays} />
+        <ExportMenu reportKey="food-cost" days={days} api={api} />
+      </div>
       {loading ? <Spinner /> : !data ? <EmptyState label="No data" /> : (
         <>
           <div className="flex gap-2">

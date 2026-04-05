@@ -4,7 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc
@@ -1874,3 +1874,359 @@ async def toast_sync(
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
+
+# ============================================================
+# Report Export — Excel & PDF
+# ============================================================
+
+import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+# ── Excel helpers ─────────────────────────────────────────
+_GOLD   = "FFD4A017"
+_DARK   = "FF0A0A12"
+_HEADER = "FF1A1A2E"
+_TEXT   = "FFF5F5F0"
+_MUTED  = "FF8E8E9F"
+
+def _xl_header_style(cell, *, gold=False):
+    cell.font      = Font(bold=True, color=_GOLD if gold else _TEXT, size=11)
+    cell.fill      = PatternFill("solid", fgColor=_HEADER)
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.border    = Border(bottom=Side(style="thin", color=_GOLD if gold else "FF2B2B4A"))
+
+def _xl_title_row(ws, title: str, ncols: int):
+    ws.append([title] + [""] * (ncols - 1))
+    ws.merge_cells(start_row=ws.max_row, start_column=1, end_row=ws.max_row, end_column=ncols)
+    cell = ws.cell(row=ws.max_row, column=1)
+    cell.font      = Font(bold=True, color=_GOLD, size=13)
+    cell.fill      = PatternFill("solid", fgColor=_DARK)
+    cell.alignment = Alignment(horizontal="left", vertical="center")
+
+def _xl_auto_width(ws):
+    for col in ws.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=8)
+        ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 40)
+
+def _wb_to_stream(wb) -> io.BytesIO:
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+# ── PDF helpers ───────────────────────────────────────────
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.units import inch
+
+_PDF_GOLD   = colors.HexColor("#D4A017")
+_PDF_DARK   = colors.HexColor("#0A0A12")
+_PDF_PANEL  = colors.HexColor("#1A1A2E")
+_PDF_MUTED  = colors.HexColor("#8E8E9F")
+_PDF_WHITE  = colors.white
+
+def _pdf_doc(title: str, rows: list, col_headers: list, col_widths: list = None, summary_rows: list = None) -> io.BytesIO:
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.5*inch, rightMargin=0.5*inch,
+                            topMargin=0.5*inch, bottomMargin=0.5*inch)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("OpsTitle", fontSize=16, textColor=_PDF_GOLD, fontName="Helvetica-Bold", spaceAfter=4)
+    sub_style   = ParagraphStyle("OpsSub",   fontSize=9,  textColor=_PDF_MUTED, fontName="Helvetica", spaceAfter=12)
+
+    elems = [
+        Paragraph("OPS AI", title_style),
+        Paragraph(title, sub_style),
+    ]
+
+    if summary_rows:
+        sum_data = summary_rows
+        sum_table = Table(sum_data, colWidths=[3*inch, 2*inch])
+        sum_table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,-1), _PDF_PANEL),
+            ("TEXTCOLOR",  (0,0), (0,-1), _PDF_MUTED),
+            ("TEXTCOLOR",  (1,0), (1,-1), _PDF_WHITE),
+            ("FONTNAME",   (0,0), (-1,-1), "Helvetica"),
+            ("FONTSIZE",   (0,0), (-1,-1), 9),
+            ("ROWBACKGROUNDS", (0,0), (-1,-1), [_PDF_PANEL, colors.HexColor("#12121e")]),
+            ("GRID",       (0,0), (-1,-1), 0.5, colors.HexColor("#2B2B4A")),
+            ("TOPPADDING", (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ]))
+        elems += [sum_table, Spacer(1, 12)]
+
+    if rows:
+        page_width = letter[0] - inch
+        if col_widths is None:
+            col_widths = [page_width / len(col_headers)] * len(col_headers)
+
+        data = [col_headers] + rows
+        tbl  = Table(data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            # Header row
+            ("BACKGROUND",  (0,0), (-1,0), _PDF_DARK),
+            ("TEXTCOLOR",   (0,0), (-1,0), _PDF_GOLD),
+            ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",    (0,0), (-1,0), 9),
+            ("ALIGN",       (0,0), (-1,0), "CENTER"),
+            # Body
+            ("FONTNAME",    (0,1), (-1,-1), "Helvetica"),
+            ("FONTSIZE",    (0,1), (-1,-1), 8),
+            ("TEXTCOLOR",   (0,1), (-1,-1), _PDF_WHITE),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [_PDF_PANEL, colors.HexColor("#12121e")]),
+            ("GRID",        (0,0), (-1,-1), 0.5, colors.HexColor("#2B2B4A")),
+            ("TOPPADDING",  (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+        ]))
+        elems.append(tbl)
+
+    doc.build(elems)
+    buf.seek(0)
+    return buf
+
+# ── Export endpoint ───────────────────────────────────────
+
+@api_router.get("/reports/export")
+async def export_report(
+    report: str,           # sales | pour-cost | food-cost | waste | low-stock | variance
+    format: str = "xlsx",  # xlsx | pdf
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    ts    = datetime.now(timezone.utc).strftime("%Y%m%d")
+    fmt   = format.lower()
+    if fmt not in ("xlsx", "pdf"):
+        raise HTTPException(status_code=400, detail="format must be xlsx or pdf")
+
+    # ── SALES ────────────────────────────────────────────────
+    if report == "sales":
+        result = await db.execute(select(Sale).where(Sale.date >= start).order_by(Sale.date))
+        sales  = result.scalars().all()
+        rows   = [{"date": s.date.strftime("%Y-%m-%d"), "total": s.total_sales, "bar": s.bar_sales, "food": s.food_sales} for s in sales]
+        total  = sum(r["total"] for r in rows)
+        bar    = sum(r["bar"]   for r in rows)
+        food   = sum(r["food"]  for r in rows)
+
+        if fmt == "xlsx":
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Sales"
+            ws.sheet_view.showGridLines = False
+            _xl_title_row(ws, f"Sales Report — Last {days} Days", 4)
+            ws.append([])
+            headers = ["Date", "Total Sales", "Bar Sales", "Food Sales"]
+            ws.append(headers)
+            for i, h in enumerate(headers, 1):
+                _xl_header_style(ws.cell(ws.max_row, i), gold=(i == 1))
+            for r in rows:
+                ws.append([r["date"], r["total"], r["bar"], r["food"]])
+            ws.append([])
+            ws.append(["TOTAL", round(total,2), round(bar,2), round(food,2)])
+            for i in range(1, 5):
+                c = ws.cell(ws.max_row, i)
+                c.font = Font(bold=True, color=_GOLD)
+            _xl_auto_width(ws)
+            filename = f"sales_{ts}.xlsx"
+            return StreamingResponse(_wb_to_stream(wb), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     headers={"Content-Disposition": f"attachment; filename={filename}"})
+        else:
+            summary = [["Period", f"Last {days} days"], ["Total Sales", f"${total:,.2f}"], ["Bar Sales", f"${bar:,.2f}"], ["Food Sales", f"${food:,.2f}"]]
+            data_rows = [[r["date"], f"${r['total']:,.2f}", f"${r['bar']:,.2f}", f"${r['food']:,.2f}"] for r in rows]
+            buf = _pdf_doc(f"Sales Report — Last {days} Days", data_rows, ["Date","Total","Bar","Food"], summary_rows=summary)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=sales_{ts}.pdf"})
+
+    # ── POUR COST ────────────────────────────────────────────
+    elif report == "pour-cost":
+        purch_result = await db.execute(select(Purchase).where(and_(Purchase.date >= start, Purchase.purchase_type == "bar")).order_by(Purchase.date))
+        purchases = purch_result.scalars().all()
+        bar_sales = (await db.execute(select(func.sum(Sale.bar_sales)).where(Sale.date >= start))).scalar() or 0
+        total_cogs = sum(p.total_cost for p in purchases)
+        pour_pct   = round((total_cogs / bar_sales * 100) if bar_sales > 0 else 0, 1)
+        target     = float(os.environ.get("TARGET_POUR_COST_PCT", "20.0"))
+
+        cat_result = await db.execute(
+            select(Purchase.item_name, func.sum(Purchase.total_cost)).where(and_(Purchase.date >= start, Purchase.purchase_type == "bar"))
+            .group_by(Purchase.item_name).order_by(desc(func.sum(Purchase.total_cost)))
+        )
+        by_item = cat_result.all()
+
+        if fmt == "xlsx":
+            wb = openpyxl.Workbook()
+            ws = wb.active; ws.title = "Pour Cost"; ws.sheet_view.showGridLines = False
+            _xl_title_row(ws, f"Pour Cost Report — Last {days} Days", 3)
+            ws.append([])
+            ws.append(["Bar Sales", f"${bar_sales:,.2f}", ""]); ws.append(["COGS (Bar Purchases)", f"${total_cogs:,.2f}", ""])
+            ws.append(["Pour Cost %", f"{pour_pct}%", ""]); ws.append(["Target", f"{target}%", ""])
+            ws.append(["Variance", f"{round(pour_pct-target,1)}%", "OVER" if pour_pct > target else "ON TARGET"])
+            ws.append([]); ws.append(["Item", "Total Spend", "% of COGS"])
+            for i in range(1,4): _xl_header_style(ws.cell(ws.max_row, i), gold=(i==1))
+            for name, cost in by_item:
+                pct_of = round(cost / total_cogs * 100, 1) if total_cogs else 0
+                ws.append([name, round(cost,2), f"{pct_of}%"])
+            _xl_auto_width(ws)
+            return StreamingResponse(_wb_to_stream(wb), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     headers={"Content-Disposition": f"attachment; filename=pour_cost_{ts}.xlsx"})
+        else:
+            summary = [["Period", f"Last {days} days"], ["Bar Sales", f"${bar_sales:,.2f}"], ["COGS", f"${total_cogs:,.2f}"],
+                       ["Pour Cost %", f"{pour_pct}%"], ["Target", f"{target}%"], ["Variance", f"{round(pour_pct-target,1)}%"]]
+            data_rows = [[n, f"${c:,.2f}", f"{round(c/total_cogs*100,1) if total_cogs else 0}%"] for n, c in by_item]
+            buf = _pdf_doc(f"Pour Cost Report — Last {days} Days", data_rows, ["Item","Spend","% COGS"], summary_rows=summary)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=pour_cost_{ts}.pdf"})
+
+    # ── FOOD COST ────────────────────────────────────────────
+    elif report == "food-cost":
+        purch_result = await db.execute(select(Purchase).where(and_(Purchase.date >= start, Purchase.purchase_type == "kitchen")).order_by(Purchase.date))
+        purchases  = purch_result.scalars().all()
+        food_sales = (await db.execute(select(func.sum(Sale.food_sales)).where(Sale.date >= start))).scalar() or 0
+        total_cogs = sum(p.total_cost for p in purchases)
+        food_pct   = round((total_cogs / food_sales * 100) if food_sales > 0 else 0, 1)
+        target     = float(os.environ.get("TARGET_FOOD_COST_PCT", "30.0"))
+
+        cat_result = await db.execute(
+            select(Purchase.item_name, func.sum(Purchase.total_cost)).where(and_(Purchase.date >= start, Purchase.purchase_type == "kitchen"))
+            .group_by(Purchase.item_name).order_by(desc(func.sum(Purchase.total_cost)))
+        )
+        by_item = cat_result.all()
+
+        if fmt == "xlsx":
+            wb = openpyxl.Workbook()
+            ws = wb.active; ws.title = "Food Cost"; ws.sheet_view.showGridLines = False
+            _xl_title_row(ws, f"Food Cost Report — Last {days} Days", 3)
+            ws.append([]); ws.append(["Food Sales", f"${food_sales:,.2f}", ""])
+            ws.append(["COGS (Kitchen Purchases)", f"${total_cogs:,.2f}", ""])
+            ws.append(["Food Cost %", f"{food_pct}%", ""]); ws.append(["Target", f"{target}%", ""])
+            ws.append(["Variance", f"{round(food_pct-target,1)}%", "OVER" if food_pct > target else "ON TARGET"])
+            ws.append([]); ws.append(["Item", "Total Spend", "% of COGS"])
+            for i in range(1,4): _xl_header_style(ws.cell(ws.max_row, i), gold=(i==1))
+            for name, cost in by_item:
+                ws.append([name, round(cost,2), f"{round(cost/total_cogs*100,1) if total_cogs else 0}%"])
+            _xl_auto_width(ws)
+            return StreamingResponse(_wb_to_stream(wb), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     headers={"Content-Disposition": f"attachment; filename=food_cost_{ts}.xlsx"})
+        else:
+            summary = [["Period", f"Last {days} days"], ["Food Sales", f"${food_sales:,.2f}"], ["COGS", f"${total_cogs:,.2f}"],
+                       ["Food Cost %", f"{food_pct}%"], ["Target", f"{target}%"], ["Variance", f"{round(food_pct-target,1)}%"]]
+            data_rows = [[n, f"${c:,.2f}", f"{round(c/total_cogs*100,1) if total_cogs else 0}%"] for n, c in by_item]
+            buf = _pdf_doc(f"Food Cost Report — Last {days} Days", data_rows, ["Item","Spend","% COGS"], summary_rows=summary)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=food_cost_{ts}.pdf"})
+
+    # ── WASTE ────────────────────────────────────────────────
+    elif report == "waste":
+        result  = await db.execute(select(WasteLog).where(WasteLog.date >= start).order_by(desc(WasteLog.date)))
+        entries = result.scalars().all()
+        total_cost = sum(e.estimated_cost or 0 for e in entries)
+
+        if fmt == "xlsx":
+            wb = openpyxl.Workbook()
+            ws = wb.active; ws.title = "Waste Log"; ws.sheet_view.showGridLines = False
+            _xl_title_row(ws, f"Waste Log — Last {days} Days", 6)
+            ws.append([])
+            headers = ["Date", "Item", "Type", "Reason", "Qty", "Est. Cost"]
+            ws.append(headers)
+            for i, h in enumerate(headers, 1): _xl_header_style(ws.cell(ws.max_row, i), gold=(i==1))
+            for e in entries:
+                ws.append([e.date.strftime("%Y-%m-%d"), e.item_name, e.item_type, e.reason, e.quantity, e.estimated_cost or 0])
+            ws.append([]); ws.append(["", "", "", "", "TOTAL", round(total_cost,2)])
+            c = ws.cell(ws.max_row, 6); c.font = Font(bold=True, color=_GOLD)
+            _xl_auto_width(ws)
+            return StreamingResponse(_wb_to_stream(wb), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     headers={"Content-Disposition": f"attachment; filename=waste_{ts}.xlsx"})
+        else:
+            summary = [["Period", f"Last {days} days"], ["Total Entries", str(len(entries))], ["Total Waste Cost", f"${total_cost:,.2f}"]]
+            data_rows = [[e.date.strftime("%Y-%m-%d"), e.item_name, e.item_type, e.reason, str(e.quantity or ""), f"${e.estimated_cost or 0:,.2f}"] for e in entries]
+            buf = _pdf_doc(f"Waste Log — Last {days} Days", data_rows, ["Date","Item","Type","Reason","Qty","Cost"],
+                           col_widths=[0.9*inch,1.6*inch,0.8*inch,0.9*inch,0.6*inch,0.8*inch], summary_rows=summary)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=waste_{ts}.pdf"})
+
+    # ── LOW STOCK ────────────────────────────────────────────
+    elif report == "low-stock":
+        # Reuse subquery pattern — no N+1
+        bar_ts  = (select(InventoryCount.item_id, func.max(InventoryCount.timestamp).label("max_ts")).group_by(InventoryCount.item_id).subquery())
+        bar_ct  = (select(InventoryCount.item_id, InventoryCount.level_percentage).join(bar_ts, and_(InventoryCount.item_id==bar_ts.c.item_id, InventoryCount.timestamp==bar_ts.c.max_ts)).subquery())
+        bar_rows = (await db.execute(select(InventoryItem.name, InventoryItem.location, InventoryItem.category, bar_ct.c.level_percentage).outerjoin(bar_ct, InventoryItem.id==bar_ct.c.item_id).where(InventoryItem.is_active==True))).all()
+
+        kit_ts  = (select(KitchenInventoryCount.item_id, func.max(KitchenInventoryCount.timestamp).label("max_ts")).group_by(KitchenInventoryCount.item_id).subquery())
+        kit_ct  = (select(KitchenInventoryCount.item_id, KitchenInventoryCount.quantity).join(kit_ts, and_(KitchenInventoryCount.item_id==kit_ts.c.item_id, KitchenInventoryCount.timestamp==kit_ts.c.max_ts)).subquery())
+        kit_rows = (await db.execute(select(KitchenInventoryItem.name, KitchenInventoryItem.location, KitchenInventoryItem.par_level, KitchenInventoryItem.unit, kit_ct.c.quantity).outerjoin(kit_ct, KitchenInventoryItem.id==kit_ct.c.item_id).where(KitchenInventoryItem.is_active==True))).all()
+
+        low_bar = [(n, loc, cat, pct, "critical" if pct==0 else ("high" if pct<=10 else "medium"))
+                   for n, loc, cat, pct in bar_rows if pct is not None and pct <= 25]
+        low_kit = [(n, loc, f"{round(qty/par*100) if par else 0}% of par", "kitchen",
+                    "critical" if qty==0 else ("high" if par and qty/par<=0.25 else "medium"))
+                   for n, loc, par, unit, qty in kit_rows if qty is not None and par and qty < par]
+
+        if fmt == "xlsx":
+            wb = openpyxl.Workbook()
+            ws = wb.active; ws.title = "Low Stock"; ws.sheet_view.showGridLines = False
+            _xl_title_row(ws, "Low Stock Report", 5)
+            ws.append([]); ws.append(["BAR ITEMS"])
+            ws.cell(ws.max_row,1).font = Font(bold=True, color=_GOLD)
+            headers = ["Item", "Location", "Category", "Level %", "Urgency"]
+            ws.append(headers)
+            for i, h in enumerate(headers, 1): _xl_header_style(ws.cell(ws.max_row, i), gold=(i==1))
+            for n, loc, cat, pct, urg in low_bar:
+                ws.append([n, loc or "", cat or "", f"{pct}%", urg.upper()])
+            ws.append([]); ws.append(["KITCHEN ITEMS"])
+            ws.cell(ws.max_row,1).font = Font(bold=True, color=_GOLD)
+            headers2 = ["Item", "Location", "% of Par", "Type", "Urgency"]
+            ws.append(headers2)
+            for i, h in enumerate(headers2, 1): _xl_header_style(ws.cell(ws.max_row, i), gold=(i==1))
+            for n, loc, pct_par, itype, urg in low_kit:
+                ws.append([n, loc or "", pct_par, itype, urg.upper()])
+            _xl_auto_width(ws)
+            return StreamingResponse(_wb_to_stream(wb), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     headers={"Content-Disposition": f"attachment; filename=low_stock_{ts}.xlsx"})
+        else:
+            summary = [["Bar Items Low", str(len(low_bar))], ["Kitchen Items Low", str(len(low_kit))], ["Total Low", str(len(low_bar)+len(low_kit))]]
+            bar_data = [[n, loc or "", cat or "", f"{pct}%", urg.upper()] for n, loc, cat, pct, urg in low_bar]
+            kit_data = [[n, loc or "", pct_par, itype, urg.upper()] for n, loc, pct_par, itype, urg in low_kit]
+            buf = _pdf_doc("Low Stock Report", bar_data + kit_data, ["Item","Location","Detail","Type/Cat","Urgency"],
+                           col_widths=[1.8*inch,1.2*inch,1.1*inch,1.0*inch,0.9*inch], summary_rows=summary)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=low_stock_{ts}.pdf"})
+
+    # ── VARIANCE ─────────────────────────────────────────────
+    elif report == "variance":
+        items_result = await db.execute(select(InventoryItem).where(InventoryItem.is_active == True))
+        items = items_result.scalars().all()
+        rows  = []
+        for item in items:
+            cr = await db.execute(
+                select(InventoryCount.level_percentage, InventoryCount.timestamp)
+                .where(InventoryCount.item_id == item.id).order_by(desc(InventoryCount.timestamp)).limit(2)
+            )
+            counts = cr.all()
+            if len(counts) < 2: continue
+            latest, previous = counts[0], counts[1]
+            change = latest[0] - previous[0]
+            cost_impact = round(abs(change)/100*(item.cost_per_unit or 0), 2)
+            rows.append({"name": item.name, "location": item.location or "", "prev": previous[0], "curr": latest[0], "change": change, "cost": cost_impact, "flag": "shrinkage" if change < -25 else ("low" if latest[0] <= 25 else "ok")})
+        rows.sort(key=lambda x: x["change"])
+
+        if fmt == "xlsx":
+            wb = openpyxl.Workbook()
+            ws = wb.active; ws.title = "Variance"; ws.sheet_view.showGridLines = False
+            _xl_title_row(ws, "Inventory Variance Report", 6)
+            ws.append([])
+            headers = ["Item", "Location", "Previous %", "Current %", "Change %", "Est. Cost Impact"]
+            ws.append(headers)
+            for i, h in enumerate(headers, 1): _xl_header_style(ws.cell(ws.max_row, i), gold=(i==1))
+            for r in rows:
+                ws.append([r["name"], r["location"], r["prev"], r["curr"], r["change"], r["cost"]])
+            _xl_auto_width(ws)
+            return StreamingResponse(_wb_to_stream(wb), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                     headers={"Content-Disposition": f"attachment; filename=variance_{ts}.xlsx"})
+        else:
+            summary = [["Items Tracked", str(len(rows))], ["Shrinkage Items", str(len([r for r in rows if r['flag']=='shrinkage']))],
+                       ["Est. Shrinkage Cost", f"${sum(r['cost'] for r in rows if r['change']<-25):,.2f}"]]
+            data_rows = [[r["name"], r["location"], f"{r['prev']}%", f"{r['curr']}%", f"{r['change']:+}%", f"${r['cost']:,.2f}"] for r in rows]
+            buf = _pdf_doc("Inventory Variance Report", data_rows, ["Item","Location","Previous","Current","Change","Cost Impact"],
+                           col_widths=[1.6*inch,1.0*inch,0.9*inch,0.9*inch,0.8*inch,1.0*inch], summary_rows=summary)
+            return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=variance_{ts}.pdf"})
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown report type: {report}. Valid: sales, pour-cost, food-cost, waste, low-stock, variance")
