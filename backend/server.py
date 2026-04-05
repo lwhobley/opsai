@@ -60,6 +60,37 @@ logger = logging.getLogger(__name__)
 # Configure Gemini
 _GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
+# Ordered fallback list — try newest first, fall back if not available for this key
+_GEMINI_MODEL_FALLBACKS = [
+    "gemini-2.0-flash",
+    "gemini-2.5-flash-preview-04-17",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+]
+
+def _get_gemini_client():
+    return genai_client.Client(api_key=_GEMINI_API_KEY)
+
+def _generate_with_fallback(prompt, preferred_model: str = None) -> str:
+    """Try preferred model first, then fall back through the list."""
+    client = _get_gemini_client()
+    models_to_try = []
+    if preferred_model:
+        models_to_try.append(preferred_model)
+    models_to_try.extend(m for m in _GEMINI_MODEL_FALLBACKS if m != preferred_model)
+    last_err = None
+    for model in models_to_try:
+        try:
+            response = client.models.generate_content(model=model, contents=prompt)
+            logger.info(f"Gemini success with model: {model}")
+            return response.text.strip()
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Gemini model {model} failed: {str(e)[:80]}")
+            continue
+    raise last_err or Exception("All Gemini models failed")
+
 # JWT Config
 JWT_SECRET = os.environ.get('JWT_SECRET')
 if not JWT_SECRET:
@@ -786,12 +817,8 @@ Respond in this exact JSON format:
 Be direct, operational, and profit-focused. Write like an experienced GM."""
 
     try:
-        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
-        response = _client.models.generate_content(
-            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'models/gemini-2.0-flash-lite'),
-            contents=prompt,
-        )
-        response_text = response.text.strip()
+        preferred = os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash')
+        response_text = _generate_with_fallback(prompt, preferred_model=preferred)
         
         # Clean up response
         if response_text.startswith("```json"):
@@ -983,17 +1010,27 @@ Rules:
 - All costs must be numbers (no currency symbols)"""
 
     try:
-        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
-
         # Pass image/PDF as base64 inline
         b64_data = base64.b64encode(content).decode("utf-8")
-        image_part = genai_client.types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=media_type)
 
-        response = _client.models.generate_content(
-            model=os.environ.get("GEMINI_RECEIPT_MODEL", "models/gemini-2.0-flash-lite"),
-            contents=[prompt, image_part],
-        )
-        raw = response.text.strip()
+        def _do_receipt(model_name):
+            _c = _get_gemini_client()
+            img = genai_client.types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=media_type)
+            return _c.models.generate_content(model=model_name, contents=[prompt, img]).text.strip()
+
+        preferred_r = os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash")
+        last_err = None
+        raw = None
+        for _m in ([preferred_r] + [m for m in _GEMINI_MODEL_FALLBACKS if m != preferred_r]):
+            try:
+                raw = _do_receipt(_m)
+                logger.info(f"Receipt OCR success with {_m}")
+                break
+            except Exception as _e:
+                last_err = _e
+                logger.warning(f"Receipt model {_m} failed: {str(_e)[:80]}")
+        if raw is None:
+            raise last_err or Exception("All receipt models failed")
 
         # Strip markdown fences if present
         if raw.startswith("```"):
@@ -2287,22 +2324,36 @@ async def export_report(
 
 
 
+
+
+# ── Temporary Gemini model debug endpoint ────────────────────────────────────
 @api_router.get("/debug/gemini-models")
-async def list_gemini_models(user: User = Depends(require_admin)):
-    """Temporary: list available Gemini models from this server."""
-    try:
-        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
-        models = list(_client.models.list())
-        # Return all models with their details for debugging
-        result = []
-        for m in models[:30]:
-            result.append({
-                "name": m.name,
-                "methods": getattr(m, 'supported_generation_methods', []),
-            })
-        return {"models": result, "count": len(models)}
-    except Exception as e:
-        return {"error": str(e)[:200]}
+async def debug_gemini_models():
+    """Test which Gemini models work from this server's IP. Remove after debugging."""
+    import httpx
+    key = _GEMINI_API_KEY
+    results = {}
+    models_to_test = [
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-pro-preview-03-25", 
+        "gemini-2.5-flash-preview-04-17",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash",
+    ]
+    async with httpx.AsyncClient(timeout=10) as client:
+        for model in models_to_test:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            try:
+                r = await client.post(url, json={"contents":[{"parts":[{"text":"Say OK"}]}]})
+                if r.status_code == 200:
+                    results[model] = "✓ WORKS"
+                else:
+                    data = r.json()
+                    results[model] = f"✗ {r.status_code}: {data.get('error',{}).get('message','?')[:60]}"
+            except Exception as e:
+                results[model] = f"✗ error: {str(e)[:40]}"
+    return results
 
 # ============================================================
 # Register router + CORS — MUST be after all @api_router decorators
