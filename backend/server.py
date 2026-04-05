@@ -788,7 +788,7 @@ Be direct, operational, and profit-focused. Write like an experienced GM."""
     try:
         _client = genai_client.Client(api_key=_GEMINI_API_KEY)
         response = _client.models.generate_content(
-            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash-lite'),
+            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.5-flash'),
             contents=prompt,
         )
         response_text = response.text.strip()
@@ -990,7 +990,7 @@ Rules:
         image_part = genai_client.types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=media_type)
 
         response = _client.models.generate_content(
-            model=os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash-lite"),
+            model=os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.5-flash"),
             contents=[prompt, image_part],
         )
         raw = response.text.strip()
@@ -2274,6 +2274,22 @@ async def list_gemini_models():
     except Exception as e:
         return {"error": str(e)}
 
+
+
+@api_router.get("/debug/gemini-models")
+async def list_gemini_models(user: User = Depends(require_admin)):
+    """Temporary: list available Gemini models from this server."""
+    try:
+        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
+        models = _client.models.list()
+        available = []
+        for m in models:
+            methods = getattr(m, 'supported_generation_methods', []) or []
+            if 'generateContent' in methods:
+                available.append(m.name)
+        return {"models": available[:20]}
+    except Exception as e:
+        return {"error": str(e)[:200]}
 
 # ============================================================
 # Register router + CORS — MUST be after all @api_router decorators
