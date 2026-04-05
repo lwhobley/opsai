@@ -2015,6 +2015,31 @@ def _pdf_doc(title: str, rows: list, col_headers: list, col_widths: list = None,
     buf.seek(0)
     return buf
 
+# ── Gemini Model Debug ───────────────────────────────────────
+@api_router.get("/ai/models")
+async def list_gemini_models(user: User = Depends(require_admin)):
+    """List available Gemini models for the configured API key."""
+    import httpx
+    key = _GEMINI_API_KEY
+    if not key:
+        return {"error": "GEMINI_API_KEY not set"}
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+                timeout=10
+            )
+            if r.status_code == 200:
+                models = r.json().get("models", [])
+                generate_models = [
+                    m["name"] for m in models
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                return {"models": generate_models, "count": len(generate_models)}
+            return {"error": f"HTTP {r.status_code}", "body": r.text[:300]}
+    except Exception as e:
+        return {"error": str(e)}
+
 # ── Export endpoint ───────────────────────────────────────
 
 @api_router.get("/reports/export")
