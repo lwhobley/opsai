@@ -175,11 +175,11 @@ class KitchenCountCreate(BaseModel):
 
 class PurchaseCreate(BaseModel):
     item_name: str
-    item_type: Optional[str] = None
+    purchase_type: Optional[str] = None   # canonical field: bar | kitchen | supply | other
     quantity: float
     total_cost: float
     date: Optional[datetime] = None
-    purchase_type: Optional[str] = None
+    item_type: Optional[str] = None       # legacy alias — resolved server-side
 
 class SaleCreate(BaseModel):
     date: datetime
@@ -480,8 +480,10 @@ async def delete_kitchen_item(item_id: str, db: AsyncSession = Depends(get_db), 
 @api_router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
     dump = data.model_dump()
-    # Ensure both fields are consistent — purchase_type is the canonical field
-    dump['item_type'] = dump.get('purchase_type') or dump.get('item_type')
+    # Resolve canonical type — purchase_type wins, item_type is legacy alias
+    resolved = dump.get('purchase_type') or dump.get('item_type') or 'other'
+    dump['purchase_type'] = resolved
+    dump['item_type'] = resolved          # keep DB column in sync
     purchase = Purchase(**dump)
     db.add(purchase)
     await db.commit()
