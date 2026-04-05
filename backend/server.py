@@ -788,7 +788,7 @@ Be direct, operational, and profit-focused. Write like an experienced GM."""
     try:
         _client = genai_client.Client(api_key=_GEMINI_API_KEY)
         response = _client.models.generate_content(
-            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.5-flash'),
+            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.5-flash'),  # gemini-2.5-flash confirmed available
             contents=prompt,
         )
         response_text = response.text.strip()
