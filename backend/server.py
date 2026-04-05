@@ -1257,22 +1257,7 @@ async def _send_push_to_all(db: AsyncSession, title: str, body: str, url: str = 
         except Exception:
             pass
 
-# Include router
-app.include_router(api_router)
-
-# CORS — restrict to explicit frontend origin(s) only
-_frontend_url = os.environ.get('FRONTEND_URL', '')
-_allowed_origins = [o.strip() for o in _frontend_url.split(',') if o.strip()] if _frontend_url else []
-if not _allowed_origins:
-    logger.warning("FRONTEND_URL is not set — CORS will block all cross-origin requests. Set FRONTEND_URL in your .env.")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=_allowed_origins,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
-)
+# (router and CORS registered at end of file)
 
 
 
@@ -2230,3 +2215,21 @@ async def export_report(
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown report type: {report}. Valid: sales, pour-cost, food-cost, waste, low-stock, variance")
+
+# ============================================================
+# Register router + CORS — MUST be after all @api_router decorators
+# ============================================================
+app.include_router(api_router)
+
+_frontend_url = os.environ.get('FRONTEND_URL', '')
+_allowed_origins = [o.strip() for o in _frontend_url.split(',') if o.strip()] if _frontend_url else []
+if not _allowed_origins:
+    logger.warning("FRONTEND_URL is not set — CORS will block all cross-origin requests.")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+)
