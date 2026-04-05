@@ -277,7 +277,7 @@ async def login(data: PinLogin, request: Request, db: AsyncSession = Depends(get
             })
             response.set_cookie(
                 key="access_token", value=token, httponly=True,
-                secure=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
+                secure=os.environ.get("COOKIE_SECURE", "true").lower() == "true",
                 samesite="lax", max_age=86400, path="/"
             )
             return response
@@ -345,29 +345,39 @@ async def create_bar_item(data: InventoryItemCreate, db: AsyncSession = Depends(
 
 @api_router.get("/inventory/bar/items", response_model=List[InventoryItemResponse])
 async def get_bar_items(location: Optional[str] = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    query = select(InventoryItem).where(InventoryItem.is_active == True)
+    # Latest count per item via MAX(timestamp) subquery — eliminates N+1
+    latest_ts_sub = (
+        select(InventoryCount.item_id, func.max(InventoryCount.timestamp).label("max_ts"))
+        .group_by(InventoryCount.item_id)
+        .subquery()
+    )
+    latest_count_sub = (
+        select(InventoryCount.item_id, InventoryCount.level_percentage)
+        .join(latest_ts_sub, and_(
+            InventoryCount.item_id == latest_ts_sub.c.item_id,
+            InventoryCount.timestamp == latest_ts_sub.c.max_ts,
+        ))
+        .subquery()
+    )
+    query = (
+        select(InventoryItem, latest_count_sub.c.level_percentage)
+        .outerjoin(latest_count_sub, InventoryItem.id == latest_count_sub.c.item_id)
+        .where(InventoryItem.is_active == True)
+    )
     if location:
         query = query.where(InventoryItem.location == location)
     query = query.order_by(InventoryItem.location, InventoryItem.section, InventoryItem.display_order)
     result = await db.execute(query)
-    items = result.scalars().all()
-    
-    response = []
-    for item in items:
-        count_result = await db.execute(
-            select(InventoryCount.level_percentage)
-            .where(InventoryCount.item_id == item.id)
-            .order_by(desc(InventoryCount.timestamp))
-            .limit(1)
-        )
-        latest = count_result.scalar_one_or_none()
-        response.append(InventoryItemResponse(
+    rows = result.all()
+    return [
+        InventoryItemResponse(
             id=item.id, name=item.name, category=item.category, subcategory=item.subcategory,
             location=item.location, section=item.section, bottle_size_ml=item.bottle_size_ml,
             cost_per_unit=item.cost_per_unit, display_order=item.display_order,
-            count_priority=item.count_priority, is_active=item.is_active, latest_count=latest
-        ))
-    return response
+            count_priority=item.count_priority, is_active=item.is_active, latest_count=latest_pct
+        )
+        for item, latest_pct in rows
+    ]
 
 @api_router.post("/inventory/bar/counts")
 async def record_bar_count(data: InventoryCountCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
@@ -405,31 +415,41 @@ async def create_kitchen_item(data: KitchenItemCreate, db: AsyncSession = Depend
 
 @api_router.get("/inventory/kitchen/items", response_model=List[KitchenItemResponse])
 async def get_kitchen_items(location: Optional[str] = None, station: Optional[str] = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    query = select(KitchenInventoryItem).where(KitchenInventoryItem.is_active == True)
+    # Latest count per item via MAX(timestamp) subquery — eliminates N+1
+    latest_ts_sub = (
+        select(KitchenInventoryCount.item_id, func.max(KitchenInventoryCount.timestamp).label("max_ts"))
+        .group_by(KitchenInventoryCount.item_id)
+        .subquery()
+    )
+    latest_count_sub = (
+        select(KitchenInventoryCount.item_id, KitchenInventoryCount.quantity)
+        .join(latest_ts_sub, and_(
+            KitchenInventoryCount.item_id == latest_ts_sub.c.item_id,
+            KitchenInventoryCount.timestamp == latest_ts_sub.c.max_ts,
+        ))
+        .subquery()
+    )
+    query = (
+        select(KitchenInventoryItem, latest_count_sub.c.quantity)
+        .outerjoin(latest_count_sub, KitchenInventoryItem.id == latest_count_sub.c.item_id)
+        .where(KitchenInventoryItem.is_active == True)
+    )
     if location:
         query = query.where(KitchenInventoryItem.location == location)
     if station:
         query = query.where(KitchenInventoryItem.station == station)
     query = query.order_by(KitchenInventoryItem.location, KitchenInventoryItem.station, KitchenInventoryItem.display_order)
     result = await db.execute(query)
-    items = result.scalars().all()
-    
-    response = []
-    for item in items:
-        count_result = await db.execute(
-            select(KitchenInventoryCount.quantity)
-            .where(KitchenInventoryCount.item_id == item.id)
-            .order_by(desc(KitchenInventoryCount.timestamp))
-            .limit(1)
-        )
-        latest = count_result.scalar_one_or_none()
-        response.append(KitchenItemResponse(
+    rows = result.all()
+    return [
+        KitchenItemResponse(
             id=item.id, name=item.name, unit=item.unit, location=item.location,
             station=item.station, cost_per_unit=item.cost_per_unit, vendor=item.vendor,
             display_order=item.display_order, par_level=item.par_level, is_active=item.is_active,
-            latest_count=latest
-        ))
-    return response
+            latest_count=latest_qty
+        )
+        for item, latest_qty in rows
+    ]
 
 @api_router.post("/inventory/kitchen/counts")
 async def record_kitchen_count(data: KitchenCountCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
@@ -785,36 +805,60 @@ async def import_inventory(file: UploadFile = File(...), inventory_type: str = "
         df.columns = df.columns.str.lower().str.strip()
         
         imported_count = 0
-        
+        updated_count = 0
+
         if inventory_type == "bar":
             for _, row in df.iterrows():
-                item = InventoryItem(
-                    name=str(row.get('name', row.get('item', 'Unknown'))).strip(),
-                    category=str(row.get('category', '')).strip() or None,
-                    subcategory=str(row.get('subcategory', '')).strip() or None,
-                    location=str(row.get('location', '')).strip() or None,
-                    section=str(row.get('section', '')).strip() or None,
-                    bottle_size_ml=int(row.get('bottle_size_ml', row.get('size_ml', 0))) if pd.notna(row.get('bottle_size_ml', row.get('size_ml'))) else None,
-                    cost_per_unit=float(row.get('cost_per_unit', row.get('cost', 0))) if pd.notna(row.get('cost_per_unit', row.get('cost'))) else 0.0
-                )
-                db.add(item)
-                imported_count += 1
+                name = str(row.get('name', row.get('item', 'Unknown'))).strip()
+                existing = (await db.execute(
+                    select(InventoryItem).where(InventoryItem.name == name, InventoryItem.is_active == True)
+                )).scalar_one_or_none()
+                if existing:
+                    # Update fields if provided
+                    if pd.notna(row.get('cost_per_unit', row.get('cost'))):
+                        existing.cost_per_unit = float(row.get('cost_per_unit', row.get('cost', existing.cost_per_unit)))
+                    if pd.notna(row.get('category', '')):
+                        existing.category = str(row.get('category', existing.category or '')).strip() or existing.category
+                    updated_count += 1
+                else:
+                    item = InventoryItem(
+                        name=name,
+                        category=str(row.get('category', '')).strip() or None,
+                        subcategory=str(row.get('subcategory', '')).strip() or None,
+                        location=str(row.get('location', '')).strip() or None,
+                        section=str(row.get('section', '')).strip() or None,
+                        bottle_size_ml=int(row.get('bottle_size_ml', row.get('size_ml', 0))) if pd.notna(row.get('bottle_size_ml', row.get('size_ml'))) else None,
+                        cost_per_unit=float(row.get('cost_per_unit', row.get('cost', 0))) if pd.notna(row.get('cost_per_unit', row.get('cost'))) else 0.0
+                    )
+                    db.add(item)
+                    imported_count += 1
         else:
             for _, row in df.iterrows():
-                item = KitchenInventoryItem(
-                    name=str(row.get('name', row.get('item', 'Unknown'))).strip(),
-                    unit=str(row.get('unit', '')).strip() or None,
-                    location=str(row.get('location', '')).strip() or None,
-                    station=str(row.get('station', '')).strip() or None,
-                    cost_per_unit=float(row.get('cost_per_unit', row.get('cost', 0))) if pd.notna(row.get('cost_per_unit', row.get('cost'))) else 0.0,
-                    vendor=str(row.get('vendor', '')).strip() or None,
-                    par_level=float(row.get('par_level', row.get('par', 0))) if pd.notna(row.get('par_level', row.get('par'))) else 0.0
-                )
-                db.add(item)
-                imported_count += 1
-        
+                name = str(row.get('name', row.get('item', 'Unknown'))).strip()
+                existing = (await db.execute(
+                    select(KitchenInventoryItem).where(KitchenInventoryItem.name == name, KitchenInventoryItem.is_active == True)
+                )).scalar_one_or_none()
+                if existing:
+                    if pd.notna(row.get('cost_per_unit', row.get('cost'))):
+                        existing.cost_per_unit = float(row.get('cost_per_unit', row.get('cost', existing.cost_per_unit)))
+                    if pd.notna(row.get('par_level', row.get('par'))):
+                        existing.par_level = float(row.get('par_level', row.get('par', existing.par_level)))
+                    updated_count += 1
+                else:
+                    item = KitchenInventoryItem(
+                        name=name,
+                        unit=str(row.get('unit', '')).strip() or None,
+                        location=str(row.get('location', '')).strip() or None,
+                        station=str(row.get('station', '')).strip() or None,
+                        cost_per_unit=float(row.get('cost_per_unit', row.get('cost', 0))) if pd.notna(row.get('cost_per_unit', row.get('cost'))) else 0.0,
+                        vendor=str(row.get('vendor', '')).strip() or None,
+                        par_level=float(row.get('par_level', row.get('par', 0))) if pd.notna(row.get('par_level', row.get('par'))) else 0.0
+                    )
+                    db.add(item)
+                    imported_count += 1
+
         await db.commit()
-        return {"message": f"Successfully imported {imported_count} items", "count": imported_count}
+        return {"message": f"Imported {imported_count} new, updated {updated_count} existing items", "imported": imported_count, "updated": updated_count}
         
     except Exception as e:
         logger.error(f"Import error: {e}")
@@ -998,6 +1042,7 @@ async def clear_all_data(body: ClearDataConfirm, db: AsyncSession = Depends(get_
     if body.confirm != "DELETE_ALL":
         raise HTTPException(status_code=400, detail='Send {"confirm": "DELETE_ALL"} to confirm.')
     from sqlalchemy import delete
+    logger.warning(f"AUDIT: /admin/clear-data triggered by user={admin.name!r} (id={admin.id}) at {datetime.now(timezone.utc).isoformat()}")
     
     # Clear counts first (foreign keys)
     await db.execute(delete(InventoryCount))
@@ -1368,46 +1413,64 @@ async def report_inventory_variance(db: AsyncSession = Depends(get_db), user: Us
 @api_router.get("/reports/low-stock")
 async def report_low_stock(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """All bar + kitchen items at or below par / 25% threshold."""
-    bar_result = await db.execute(select(InventoryItem).where(InventoryItem.is_active == True))
-    bar_items  = bar_result.scalars().all()
+    # Bar: bulk fetch latest count per item via MAX(timestamp) subquery — no N+1
+    bar_ts_sub = (
+        select(InventoryCount.item_id, func.max(InventoryCount.timestamp).label("max_ts"))
+        .group_by(InventoryCount.item_id).subquery()
+    )
+    bar_count_sub = (
+        select(InventoryCount.item_id, InventoryCount.level_percentage, InventoryCount.timestamp)
+        .join(bar_ts_sub, and_(
+            InventoryCount.item_id == bar_ts_sub.c.item_id,
+            InventoryCount.timestamp == bar_ts_sub.c.max_ts,
+        )).subquery()
+    )
+    bar_rows = (await db.execute(
+        select(InventoryItem, bar_count_sub.c.level_percentage, bar_count_sub.c.timestamp)
+        .outerjoin(bar_count_sub, InventoryItem.id == bar_count_sub.c.item_id)
+        .where(InventoryItem.is_active == True)
+    )).all()
 
     low_bar = []
-    for item in bar_items:
-        cr = await db.execute(
-            select(InventoryCount.level_percentage, InventoryCount.timestamp)
-            .where(InventoryCount.item_id == item.id)
-            .order_by(desc(InventoryCount.timestamp)).limit(1)
-        )
-        row = cr.first()
-        if row and row[0] <= 25:
+    for item, level_pct, counted_at in bar_rows:
+        if level_pct is not None and level_pct <= 25:
             low_bar.append({
                 "name": item.name, "type": "bar", "location": item.location,
-                "category": item.category, "level_pct": row[0],
-                "last_counted": row[1].strftime("%Y-%m-%d %H:%M"),
+                "category": item.category, "level_pct": level_pct,
+                "last_counted": counted_at.strftime("%Y-%m-%d %H:%M") if counted_at else None,
                 "cost_per_unit": item.cost_per_unit,
-                "urgency": "critical" if row[0] == 0 else ("high" if row[0] <= 10 else "medium"),
+                "urgency": "critical" if level_pct == 0 else ("high" if level_pct <= 10 else "medium"),
             })
 
-    kitchen_result = await db.execute(select(KitchenInventoryItem).where(KitchenInventoryItem.is_active == True))
-    kitchen_items  = kitchen_result.scalars().all()
+    # Kitchen: same pattern
+    kit_ts_sub = (
+        select(KitchenInventoryCount.item_id, func.max(KitchenInventoryCount.timestamp).label("max_ts"))
+        .group_by(KitchenInventoryCount.item_id).subquery()
+    )
+    kit_count_sub = (
+        select(KitchenInventoryCount.item_id, KitchenInventoryCount.quantity, KitchenInventoryCount.timestamp)
+        .join(kit_ts_sub, and_(
+            KitchenInventoryCount.item_id == kit_ts_sub.c.item_id,
+            KitchenInventoryCount.timestamp == kit_ts_sub.c.max_ts,
+        )).subquery()
+    )
+    kit_rows = (await db.execute(
+        select(KitchenInventoryItem, kit_count_sub.c.quantity, kit_count_sub.c.timestamp)
+        .outerjoin(kit_count_sub, KitchenInventoryItem.id == kit_count_sub.c.item_id)
+        .where(KitchenInventoryItem.is_active == True)
+    )).all()
 
     low_kitchen = []
-    for item in kitchen_items:
-        cr = await db.execute(
-            select(KitchenInventoryCount.quantity, KitchenInventoryCount.timestamp)
-            .where(KitchenInventoryCount.item_id == item.id)
-            .order_by(desc(KitchenInventoryCount.timestamp)).limit(1)
-        )
-        row = cr.first()
-        if row and item.par_level > 0 and row[0] < item.par_level:
-            pct_of_par = round(row[0] / item.par_level * 100)
+    for item, quantity, counted_at in kit_rows:
+        if quantity is not None and item.par_level > 0 and quantity < item.par_level:
+            pct_of_par = round(quantity / item.par_level * 100)
             low_kitchen.append({
                 "name": item.name, "type": "kitchen", "location": item.location,
-                "station": item.station, "quantity": row[0], "par_level": item.par_level,
+                "station": item.station, "quantity": quantity, "par_level": item.par_level,
                 "unit": item.unit, "pct_of_par": pct_of_par,
-                "last_counted": row[1].strftime("%Y-%m-%d %H:%M"),
+                "last_counted": counted_at.strftime("%Y-%m-%d %H:%M") if counted_at else None,
                 "cost_per_unit": item.cost_per_unit,
-                "urgency": "critical" if row[0] == 0 else ("high" if pct_of_par <= 25 else "medium"),
+                "urgency": "critical" if quantity == 0 else ("high" if pct_of_par <= 25 else "medium"),
             })
 
     all_low = sorted(low_bar + low_kitchen, key=lambda x: {"critical": 0, "high": 1, "medium": 2}[x["urgency"]])
@@ -1657,15 +1720,22 @@ async def toast_sync(
         bar_sales   = 0.0
         food_sales  = 0.0
 
-        # Toast revenue centers: map by name contains "bar" → bar, else food
+        # Toast revenue centers: configurable via TOAST_BAR_REVENUE_CENTER_GUIDS env var
+        # Fallback: name-based heuristic (set env var for reliable classification)
+        _bar_rc_guids_raw = os.environ.get("TOAST_BAR_REVENUE_CENTER_GUIDS", "")
+        _bar_rc_guids = {g.strip().lower() for g in _bar_rc_guids_raw.split(",") if g.strip()}
+
         for order in orders:
             checks = order.get("checks", [])
             for check in checks:
                 amount = check.get("totalAmount", 0.0) or 0.0
                 total_sales += amount
-                # Revenue center heuristic — refine once you know your GUID
-                rc_name = (order.get("revenueCenter") or {}).get("name", "").lower()
-                if "bar" in rc_name or "beverage" in rc_name or "drink" in rc_name:
+                rc = order.get("revenueCenter") or {}
+                rc_guid = (rc.get("guid") or "").lower()
+                rc_name = (rc.get("name") or "").lower()
+                # GUID match takes priority; fall back to name heuristic
+                if (_bar_rc_guids and rc_guid in _bar_rc_guids) or \
+                   (not _bar_rc_guids and ("bar" in rc_name or "beverage" in rc_name or "drink" in rc_name)):
                     bar_sales += amount
                 else:
                     food_sales += amount
