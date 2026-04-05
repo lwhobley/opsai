@@ -788,7 +788,7 @@ Be direct, operational, and profit-focused. Write like an experienced GM."""
     try:
         _client = genai_client.Client(api_key=_GEMINI_API_KEY)
         response = _client.models.generate_content(
-            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.5-flash'),  # gemini-2.5-flash confirmed available
+            model=os.environ.get('GEMINI_INSIGHTS_MODEL', 'models/gemini-2.0-flash-lite'),
             contents=prompt,
         )
         response_text = response.text.strip()
@@ -990,7 +990,7 @@ Rules:
         image_part = genai_client.types.Part.from_bytes(data=base64.b64decode(b64_data), mime_type=media_type)
 
         response = _client.models.generate_content(
-            model=os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.5-flash"),
+            model=os.environ.get("GEMINI_RECEIPT_MODEL", "models/gemini-2.0-flash-lite"),
             contents=[prompt, image_part],
         )
         raw = response.text.strip()
@@ -2284,46 +2284,6 @@ async def export_report(
     else:
         raise HTTPException(status_code=400, detail=f"Unknown report type: {report}. Valid: sales, pour-cost, food-cost, waste, low-stock, variance")
 
-@api_router.get("/debug/models")
-async def list_gemini_models():
-    """Temporary: list available Gemini models + direct REST test."""
-    import httpx
-    results = {}
-    # Direct REST call to list models
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models",
-                params={"key": _GEMINI_API_KEY}
-            )
-            data = r.json()
-            model_names = [m["name"] for m in data.get("models", [])]
-            results["rest_models"] = model_names[:20]
-            results["rest_status"] = r.status_code
-    except Exception as e:
-        results["rest_error"] = str(e)
-
-    # Test specific models
-    test_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b",
-                   "gemini-2.0-flash-lite", "gemini-2.5-flash-preview-04-17"]
-    model_results = {}
-    async with httpx.AsyncClient(timeout=10) as client:
-        for model in test_models:
-            try:
-                r = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                    params={"key": _GEMINI_API_KEY},
-                    json={"contents": [{"parts": [{"text": "Say OK"}]}]}
-                )
-                if r.status_code == 200:
-                    model_results[model] = "✓ WORKS"
-                else:
-                    body = r.json()
-                    model_results[model] = f"✗ {r.status_code}: {body.get('error',{}).get('message','?')[:60]}"
-            except Exception as e:
-                model_results[model] = f"✗ exception: {str(e)[:40]}"
-    results["model_tests"] = model_results
-    return results
 
 
 
@@ -2332,13 +2292,15 @@ async def list_gemini_models(user: User = Depends(require_admin)):
     """Temporary: list available Gemini models from this server."""
     try:
         _client = genai_client.Client(api_key=_GEMINI_API_KEY)
-        models = _client.models.list()
-        available = []
-        for m in models:
-            methods = getattr(m, 'supported_generation_methods', []) or []
-            if 'generateContent' in methods:
-                available.append(m.name)
-        return {"models": available[:20]}
+        models = list(_client.models.list())
+        # Return all models with their details for debugging
+        result = []
+        for m in models[:30]:
+            result.append({
+                "name": m.name,
+                "methods": getattr(m, 'supported_generation_methods', []),
+            })
+        return {"models": result, "count": len(models)}
     except Exception as e:
         return {"error": str(e)[:200]}
 
