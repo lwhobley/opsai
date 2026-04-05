@@ -2329,19 +2329,33 @@ async def export_report(
 # ── Temporary Gemini model debug endpoint ────────────────────────────────────
 @api_router.get("/debug/gemini-models")
 async def debug_gemini_models():
-    """Test which Gemini models work from this server's IP. Remove after debugging."""
+    """Test which Gemini models work from this server. Remove after debugging."""
     import httpx
     key = _GEMINI_API_KEY
     results = {}
     models_to_test = [
-        "gemini-2.0-flash-lite",
-        "gemini-2.5-pro-preview-03-25", 
-        "gemini-2.5-flash-preview-04-17",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-exp",
+        "gemini-2.5-flash-preview-04-17", "gemini-2.5-pro-preview-03-25",
+        "gemini-1.5-flash", "gemini-1.5-pro",
+        "gemini-2.0-flash-thinking-exp", "learnlm-2.0-flash-experimental",
     ]
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=15) as client:
+        # List available models first
+        try:
+            list_r = await client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}&pageSize=100")
+            if list_r.status_code == 200:
+                models_data = list_r.json()
+                available = [
+                    m["name"] for m in models_data.get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                results["__available_models__"] = available
+            else:
+                results["__list_status__"] = f"{list_r.status_code}: {list_r.text[:200]}"
+        except Exception as e:
+            results["__list_error__"] = str(e)[:80]
+
+        # Test each model
         for model in models_to_test:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
             try:
@@ -2350,24 +2364,9 @@ async def debug_gemini_models():
                     results[model] = "✓ WORKS"
                 else:
                     data = r.json()
-                    results[model] = f"✗ {r.status_code}: {data.get('error',{}).get('message','?')[:60]}"
+                    results[model] = f"✗ {r.status_code}: {data.get('error',{}).get('message','?')[:80]}"
             except Exception as e:
                 results[model] = f"✗ error: {str(e)[:40]}"
-    # Also list available models
-    try:
-        async with httpx.AsyncClient(timeout=10) as list_client:
-         list_r = await list_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={key}")
-         if list_r.status_code == 200:
-            models_data = list_r.json()
-            available = [
-                m['name'] for m in models_data.get('models', [])
-                if 'generateContent' in m.get('supportedGenerationMethods', [])
-            ]
-            results['__available_models__'] = available
-         else:
-            results['__list_error__'] = f"{list_r.status_code}: {list_r.text[:100]}"
-    except Exception as e:
-        results['__list_error__'] = str(e)[:60]
     return results
 
 # ============================================================
