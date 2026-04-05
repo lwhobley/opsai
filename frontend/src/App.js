@@ -66,9 +66,9 @@ const AppLayout = ({ children }) => {
   // Close sheet on route change
   React.useEffect(() => { setShowMore(false); }, [location.pathname]);
 
-  // Auto-subscribe to push notifications
+  // Auto-subscribe if permission already granted (no prompt on load)
   React.useEffect(() => {
-    if (user && isPushSupported() && Notification.permission !== 'denied') {
+    if (user && isPushSupported() && Notification.permission === 'granted') {
       subscribeToPush(api).catch(() => {});
     }
   }, [user, api]);

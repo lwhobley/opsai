@@ -31,6 +31,7 @@ from models import (
     WasteLog, PushSubscription
 )
 from pywebpush import webpush, WebPushException
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ── Simple in-memory login rate limiter ──────────────────────────────────────
 from contextlib import asynccontextmanager
@@ -89,9 +90,22 @@ async def lifespan(app: FastAPI):
             await db.commit()
             logger.info("Admin PIN synced from ADMIN_PIN env var.")
 
+    # ── Scheduler: low-stock push alerts ─────────────────────
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        _scheduled_low_stock_check,
+        trigger="cron",
+        hour=7, minute=0,          # 7 AM daily (UTC)
+        id="low_stock_check",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("APScheduler started — low-stock check runs daily at 07:00 UTC")
+
     yield  # app is running
 
     # ── Shutdown ─────────────────────────────────────────────
+    scheduler.shutdown(wait=False)
     await engine.dispose()
 
 app = FastAPI(title="Ops AI - Restaurant Operations", lifespan=lifespan)
@@ -1065,11 +1079,66 @@ async def clear_all_data(body: ClearDataConfirm, db: AsyncSession = Depends(get_
     await db.commit()
     return {"message": "All data cleared successfully"}
 
+# ── Scheduled Low-Stock Alert ────────────────────────────────────────────────
+
+async def _scheduled_low_stock_check():
+    """Run at 07:00 UTC daily. Send push alert if any items are critical/high."""
+    if not VAPID_PRIVATE_KEY:
+        return
+    async with AsyncSessionLocal() as db:
+        # Bar items — bulk latest counts
+        bar_ts = (
+            select(InventoryCount.item_id, func.max(InventoryCount.timestamp).label("max_ts"))
+            .group_by(InventoryCount.item_id).subquery()
+        )
+        bar_ct = (
+            select(InventoryCount.item_id, InventoryCount.level_percentage)
+            .join(bar_ts, and_(InventoryCount.item_id == bar_ts.c.item_id,
+                               InventoryCount.timestamp == bar_ts.c.max_ts)).subquery()
+        )
+        bar_rows = (await db.execute(
+            select(InventoryItem.name, bar_ct.c.level_percentage)
+            .outerjoin(bar_ct, InventoryItem.id == bar_ct.c.item_id)
+            .where(InventoryItem.is_active == True)
+        )).all()
+        critical_bar = [name for name, pct in bar_rows if pct is not None and pct <= 10]
+
+        # Kitchen items — bulk latest counts
+        kit_ts = (
+            select(KitchenInventoryCount.item_id, func.max(KitchenInventoryCount.timestamp).label("max_ts"))
+            .group_by(KitchenInventoryCount.item_id).subquery()
+        )
+        kit_ct = (
+            select(KitchenInventoryCount.item_id, KitchenInventoryCount.quantity)
+            .join(kit_ts, and_(KitchenInventoryCount.item_id == kit_ts.c.item_id,
+                               KitchenInventoryCount.timestamp == kit_ts.c.max_ts)).subquery()
+        )
+        kit_rows = (await db.execute(
+            select(KitchenInventoryItem.name, KitchenInventoryItem.par_level, kit_ct.c.quantity)
+            .outerjoin(kit_ct, KitchenInventoryItem.id == kit_ct.c.item_id)
+            .where(KitchenInventoryItem.is_active == True)
+        )).all()
+        critical_kit = [name for name, par, qty in kit_rows
+                        if qty is not None and par and par > 0 and (qty / par) <= 0.25]
+
+        total = len(critical_bar) + len(critical_kit)
+        if total == 0:
+            logger.info("Low-stock check: no critical items.")
+            return
+
+        sample = (critical_bar + critical_kit)[:3]
+        more = total - len(sample)
+        body = f"{', '.join(sample)}" + (f" +{more} more" if more else "")
+        title = f"⚠️ {total} item{'s' if total != 1 else ''} critically low"
+
+        await _send_push_to_all(db, title=title, body=body, url="/reports?tab=low-stock")
+        logger.info(f"Low-stock alert sent: {total} items — {body}")
+
 # ── Push Notifications ────────────────────────────────────────────────────────
 
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
-VAPID_CLAIMS = {"sub": "mailto:ops-ai@notifications.local"}
+VAPID_CLAIMS = {"sub": os.environ.get("VAPID_MAILTO", "mailto:ops@opsai.app")}
 
 class PushSubscriptionCreate(BaseModel):
     endpoint: str
@@ -1152,6 +1221,23 @@ async def send_push_notification(data: PushNotificationSend, db: AsyncSession = 
         await db.commit()
 
     return {"sent": sent, "failed": failed, "cleaned": len(stale_ids)}
+
+@api_router.post("/push/test-low-stock")
+async def trigger_low_stock_check(db: AsyncSession = Depends(get_db), admin: User = Depends(require_manager)):
+    """Manually trigger the low-stock push alert (for testing). Manager+ only."""
+    await _scheduled_low_stock_check()
+    return {"message": "Low-stock check triggered"}
+
+@api_router.get("/push/status")
+async def push_status(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Returns whether push is configured and how many subscriptions exist."""
+    count_result = await db.execute(select(func.count(PushSubscription.id)))
+    sub_count = count_result.scalar() or 0
+    return {
+        "configured": bool(VAPID_PRIVATE_KEY and VAPID_PUBLIC_KEY),
+        "public_key": VAPID_PUBLIC_KEY if VAPID_PUBLIC_KEY else None,
+        "subscriptions": sub_count,
+    }
 
 # Helper to send push from other parts of the app
 async def _send_push_to_all(db: AsyncSession, title: str, body: str, url: str = "/"):

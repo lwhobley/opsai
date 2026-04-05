@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Users, Plus, Trash, ShieldCheck, UserCircle, Key } from '@phosphor-icons/react';
+import { Users, Plus, Trash, ShieldCheck, UserCircle, Key, Bell, BellSlash, BellRinging } from '@phosphor-icons/react';
+import { subscribeToPush, unsubscribeFromPush, isPushSubscribed, isPushSupported } from '../utils/pushNotifications';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
@@ -186,10 +187,53 @@ const UserManagement = () => {
   const { api, isAdmin, user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pushState, setPushState] = useState('unknown'); // unknown | unsupported | denied | prompt | subscribed | unsubscribed
+  const [pushLoading, setPushLoading] = useState(false);
 
   useEffect(() => {
     if (isAdmin) fetchUsers();
   }, [isAdmin]);
+
+  // Check push subscription state on mount
+  useEffect(() => {
+    if (!isPushSupported()) { setPushState('unsupported'); return; }
+    if (Notification.permission === 'denied') { setPushState('denied'); return; }
+    isPushSubscribed().then(subscribed => {
+      setPushState(subscribed ? 'subscribed' : (Notification.permission === 'granted' ? 'unsubscribed' : 'prompt'));
+    });
+  }, []);
+
+  const handleEnableNotifications = async () => {
+    setPushLoading(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission === 'denied') { setPushState('denied'); toast.error('Notifications blocked — enable in browser settings'); return; }
+      if (permission !== 'granted') { setPushState('prompt'); return; }
+      const sub = await subscribeToPush(api);
+      if (sub) { setPushState('subscribed'); toast.success('Low-stock alerts enabled'); }
+      else { toast.error('Could not subscribe — push may not be configured on server'); }
+    } catch { toast.error('Failed to enable notifications'); }
+    finally { setPushLoading(false); }
+  };
+
+  const handleDisableNotifications = async () => {
+    setPushLoading(true);
+    try {
+      await unsubscribeFromPush(api);
+      setPushState(Notification.permission === 'granted' ? 'unsubscribed' : 'prompt');
+      toast.success('Notifications disabled');
+    } catch { toast.error('Failed to disable notifications'); }
+    finally { setPushLoading(false); }
+  };
+
+  const handleTestAlert = async () => {
+    try {
+      await api.post('/push/test-low-stock');
+      toast.success('Test alert triggered — check your notifications');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Test failed');
+    }
+  };
 
   const fetchUsers = async () => {
     try {
@@ -295,7 +339,82 @@ const UserManagement = () => {
         </div>
       )}
 
+      {/* ── Push Notification Settings ── */}
       <div className="mt-6 p-4 bg-[#1A1A2E] border border-white/5 rounded-xl">
+        <div className="flex items-center gap-2 mb-3">
+          <Bell className="w-4 h-4 text-[#D4A017]" />
+          <span className="text-xs uppercase tracking-wider text-[#5A5A70] font-semibold">Low-Stock Alerts</span>
+          {pushState === 'subscribed' && (
+            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-[#10B981]/20 text-[#10B981]">Active</span>
+          )}
+        </div>
+
+        {pushState === 'unsupported' && (
+          <p className="text-sm text-[#5A5A70]">Push notifications are not supported in this browser.</p>
+        )}
+
+        {pushState === 'denied' && (
+          <p className="text-sm text-[#D62828]">
+            Notifications blocked. Enable them in your browser settings, then reload.
+          </p>
+        )}
+
+        {(pushState === 'prompt' || pushState === 'unknown') && (
+          <div>
+            <p className="text-sm text-[#8E8E9F] mb-3">
+              Get a push alert each morning when bar or kitchen items are critically low.
+            </p>
+            <button
+              onClick={handleEnableNotifications}
+              disabled={pushLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-[#D4A017] text-[#0A0A12] rounded-xl text-sm font-semibold disabled:opacity-50"
+            >
+              <BellRinging className="w-4 h-4" />
+              {pushLoading ? 'Enabling…' : 'Enable Alerts on This Device'}
+            </button>
+          </div>
+        )}
+
+        {pushState === 'unsubscribed' && (
+          <div>
+            <p className="text-sm text-[#8E8E9F] mb-3">Alerts are off on this device.</p>
+            <button
+              onClick={handleEnableNotifications}
+              disabled={pushLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-[#D4A017] text-[#0A0A12] rounded-xl text-sm font-semibold disabled:opacity-50"
+            >
+              <Bell className="w-4 h-4" />
+              {pushLoading ? 'Enabling…' : 'Re-enable Alerts'}
+            </button>
+          </div>
+        )}
+
+        {pushState === 'subscribed' && (
+          <div className="space-y-3">
+            <p className="text-sm text-[#8E8E9F]">
+              You'll receive a push alert at 7 AM if any items are critically low (bar ≤10%, kitchen ≤25% of par).
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleTestAlert}
+                className="text-xs px-3 py-1.5 border border-[#D4A017]/50 text-[#D4A017] rounded-lg hover:bg-[#D4A017]/10 transition-colors"
+              >
+                Send Test Alert
+              </button>
+              <button
+                onClick={handleDisableNotifications}
+                disabled={pushLoading}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-white/10 text-[#8E8E9F] rounded-lg hover:bg-white/5 transition-colors disabled:opacity-50"
+              >
+                <BellSlash className="w-3.5 h-3.5" />
+                {pushLoading ? 'Disabling…' : 'Disable on This Device'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 p-4 bg-[#1A1A2E] border border-white/5 rounded-xl">
         <div className="flex items-center gap-2 mb-2">
           <Key className="w-4 h-4 text-[#D4A017]" />
           <span className="text-xs uppercase tracking-wider text-[#5A5A70] font-semibold">PIN Security</span>
