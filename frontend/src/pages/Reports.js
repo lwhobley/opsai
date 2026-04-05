@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   ChartBar, WarningCircle, Scales, ArrowDown, ArrowUp,
@@ -237,7 +238,7 @@ const LowStockPanel = ({ api }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get('/reports/low-stock').then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    api.get('/reports/low-stock').then(r => setData(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <Spinner />;
@@ -301,7 +302,7 @@ const VariancePanel = ({ api }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    api.get('/reports/inventory-variance').then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    api.get('/reports/inventory-variance').then(r => setData(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <Spinner />;
@@ -363,7 +364,7 @@ const WastePanel = ({ api }) => {
 
   const load = useCallback(() => {
     setLoading(true);
-    api.get(`/reports/waste-summary?days=${days}`).then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    api.get(`/reports/waste-summary?days=${days}`).then(r => setData(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, [days]);
 
   useEffect(() => { load(); }, [load]);
@@ -445,7 +446,7 @@ const SalesPanel = ({ api }) => {
 
   useEffect(() => {
     setLoading(true);
-    api.get(`/reports/sales?days=${days}`).then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    api.get(`/reports/sales?days=${days}`).then(r => setData(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, [days]);
 
   return (
@@ -494,7 +495,7 @@ const PourCostPanel = ({ api }) => {
 
   useEffect(() => {
     setLoading(true);
-    api.get(`/reports/pour-cost?days=${days}`).then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    api.get(`/reports/pour-cost?days=${days}`).then(r => setData(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, [days]);
 
   return (
@@ -547,7 +548,7 @@ const FoodCostPanel = ({ api }) => {
 
   useEffect(() => {
     setLoading(true);
-    api.get(`/reports/food-cost?days=${days}`).then(r => setData(r.data)).catch(console.error).finally(() => setLoading(false));
+    api.get(`/reports/food-cost?days=${days}`).then(r => setData(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, [days]);
 
   return (
@@ -612,7 +613,11 @@ const FoodCostPanel = ({ api }) => {
 // ── Main Page ────────────────────────────────────────────────────────────────
 const Reports = () => {
   const { api } = useAuth();
-  const [activeTab, setActiveTab] = useState('low-stock');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = searchParams.get('tab');
+    return TABS.find(t => t.id === tab) ? tab : 'low-stock';
+  });
 
   const panels = {
     'low-stock': <LowStockPanel api={api} />,

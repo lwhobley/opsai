@@ -463,7 +463,7 @@ const PurchaseEntry = () => {
     setLoading(true);
     api.get(`/purchases?days=${days}`)
       .then(r => setPurchases(r.data))
-      .catch(console.error)
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, [days]);
 

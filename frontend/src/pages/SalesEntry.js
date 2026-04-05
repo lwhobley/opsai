@@ -121,7 +121,7 @@ const SalesEntry = () => {
     ]).then(([salesRes, toastRes]) => {
       setSales(salesRes.data);
       setToastConnected(toastRes.data.is_connected);
-    }).catch(console.error).finally(() => setLoading(false));
+    }).catch(() => {}).finally(() => setLoading(false));
   }, [days]);
 
   useEffect(() => { load(); }, [load]);
