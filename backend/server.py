@@ -786,7 +786,7 @@ Respond in this exact JSON format:
 Be direct, operational, and profit-focused. Write like an experienced GM."""
 
     try:
-        model = genai.GenerativeModel(os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-1.5-flash'))
+        model = genai.GenerativeModel(os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash'))
         response = model.generate_content(prompt)
         response_text = response.text.strip()
         
@@ -980,7 +980,7 @@ Rules:
 - All costs must be numbers (no currency symbols)"""
 
     try:
-        model = genai.GenerativeModel(os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-1.5-flash"))
+        model = genai.GenerativeModel(os.environ.get("GEMINI_RECEIPT_MODEL", "gemini-2.0-flash"))
 
         # Pass image/PDF as base64 inline
         b64_data = base64.b64encode(content).decode("utf-8")
