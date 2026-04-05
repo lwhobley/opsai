@@ -517,6 +517,25 @@ async def get_purchases(days: int = 30, db: AsyncSession = Depends(get_db), user
 # Sales
 @api_router.post("/sales")
 async def create_sale(data: SaleCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_manager)):
+    # Upsert by calendar date — enforce one record per day
+    day_start = data.date.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end   = day_start + timedelta(days=1)
+    # Find any existing records for this day (guard against legacy duplicates with first())
+    existing_result = await db.execute(
+        select(Sale).where(Sale.date >= day_start, Sale.date < day_end).order_by(Sale.date)
+    )
+    all_existing = existing_result.scalars().all()
+    # Delete extra duplicates if any exist (legacy data cleanup)
+    for dup in all_existing[1:]:
+        await db.delete(dup)
+    existing = all_existing[0] if all_existing else None
+    if existing:
+        existing.total_sales = data.total_sales
+        existing.bar_sales   = data.bar_sales
+        existing.food_sales  = data.food_sales
+        existing.date        = data.date
+        await db.commit()
+        return {"message": "Sale updated", "id": existing.id}
     sale = Sale(**data.model_dump())
     db.add(sale)
     await db.commit()
@@ -767,7 +786,7 @@ Respond in this exact JSON format:
 Be direct, operational, and profit-focused. Write like an experienced GM."""
 
     try:
-        model = genai.GenerativeModel(os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-2.0-flash'))
+        model = genai.GenerativeModel(os.environ.get('GEMINI_INSIGHTS_MODEL', 'gemini-1.5-flash'))
         response = model.generate_content(prompt)
         response_text = response.text.strip()
         
