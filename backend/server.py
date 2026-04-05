@@ -1247,6 +1247,20 @@ async def send_push_notification(data: PushNotificationSend, db: AsyncSession = 
 
     return {"sent": sent, "failed": failed, "cleaned": len(stale_ids)}
 
+@api_router.get("/ai/models")
+async def list_ai_models(user: User = Depends(require_admin)):
+    """List available Gemini models for debugging."""
+    try:
+        _client = genai_client.Client(api_key=_GEMINI_API_KEY)
+        models = list(_client.models.list())
+        flash = [m.name for m in models
+                 if hasattr(m, 'supported_actions') and 'generateContent' in (m.supported_actions or [])
+                 or hasattr(m, 'supported_generation_methods') and 'generateContent' in (m.supported_generation_methods or [])]
+        all_names = [m.name for m in models]
+        return {"models": all_names[:30], "flash_models": flash[:10]}
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
 @api_router.post("/push/test-low-stock")
 async def trigger_low_stock_check(db: AsyncSession = Depends(get_db), admin: User = Depends(require_manager)):
     """Manually trigger the low-stock push alert (for testing). Manager+ only."""
