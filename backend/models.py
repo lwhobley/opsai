@@ -180,3 +180,11 @@ class PushSubscription(Base):
     p256dh = Column(Text, nullable=False)
     auth = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now)
+
+class EodSummary(Base):
+    __tablename__ = "eod_summaries"
+    id         = Column(String, primary_key=True, default=lambda: str(__import__('uuid').uuid4()))
+    date       = Column(Date, nullable=False, unique=True)   # one per calendar day
+    summary    = Column(Text, nullable=False)                # Gemini narrative
+    highlights = Column(JSON, nullable=True)                 # {sales, cogs, pour_cost_pct, low_stock_count}
+    created_at = Column(DateTime(timezone=True), default=lambda: __import__('datetime').datetime.now(__import__('datetime').timezone.utc))

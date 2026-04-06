@@ -11,24 +11,25 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
 
-  const handlePinInput = async (digit) => {
-    if (pin.length >= 4 || loading) return;
+  const attemptLogin = async (pinToTry) => {
+    setLoading(true);
+    const result = await login(pinToTry);
+    if (!result.success) {
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+      setError(result.error);
+      setPin('');
+    }
+    setLoading(false);
+  };
 
+  const handlePinInput = (digit) => {
+    if (pin.length >= 6 || loading) return;
     const newPin = pin + digit;
     setPin(newPin);
     setError('');
-
-    if (newPin.length === 4) {
-      setLoading(true);
-      const result = await login(newPin);
-      if (!result.success) {
-        setShake(true);
-        setTimeout(() => setShake(false), 500);
-        setError(result.error);
-        setPin('');
-      }
-      setLoading(false);
-    }
+    // Auto-submit at 6 digits; 4-digit users tap submit or wait for auto at 6
+    if (newPin.length === 6) attemptLogin(newPin);
   };
 
   const handleBackspace = () => {
@@ -47,7 +48,7 @@ const LoginPage = () => {
         <p className="login-subtitle">Enter your PIN to continue</p>
         
         <div className={`login-pin-dots ${shake ? 'login-shake' : ''}`} data-testid="pin-display">
-          {[0, 1, 2, 3].map((i) => (
+          {[0, 1, 2, 3, 4, 5].map((i) => (
             <div key={i} className={`login-dot ${pin.length > i ? 'active' : ''}`}>
               {pin.length > i && <div className="login-dot-fill" />}
             </div>
@@ -83,14 +84,26 @@ const LoginPage = () => {
           >
             0
           </button>
-          <button
-            onClick={handleBackspace}
-            disabled={loading}
-            className="login-key login-key-back"
-            data-testid="pin-btn-back"
-          >
-            <Backspace size={22} weight="regular" />
-          </button>
+          {pin.length >= 4 && pin.length < 6 ? (
+            <button
+              onClick={() => attemptLogin(pin)}
+              disabled={loading}
+              className="login-key login-key-back"
+              style={{ color: '#D4A017', fontSize: 13, fontWeight: 700 }}
+              data-testid="pin-btn-submit"
+            >
+              OK
+            </button>
+          ) : (
+            <button
+              onClick={handleBackspace}
+              disabled={loading}
+              className="login-key login-key-back"
+              data-testid="pin-btn-back"
+            >
+              <Backspace size={22} weight="regular" />
+            </button>
+          )}
         </div>
       </div>
     </div>
